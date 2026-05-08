@@ -9,6 +9,27 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - flow-network
+
+  app:
+    build: .
+    container_name: flow-engine-app
+    environment:
+      SPRING_DATASOURCE_URL: postgres:5432/flow_engine
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8060:8060"
+    depends_on:
+      - postgres
+    networks:
+      - flow-network
 
 volumes:
   postgres_data:
+
+networks:
+  flow-network:
