@@ -10,4 +10,4 @@ spring:
     show-sql: ${SPRING_JPA_SHOW_SQL:true}
 
 server:
-  port: ${SERVER_PORT:8060}
+  port: ${PORT:8060}

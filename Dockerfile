@@ -10,5 +10,4 @@ RUN ./mvnw clean package -DskipTests
 
 EXPOSE 8060
 
-CMD ["java", "-jar", "target/api-flow-engine-1.0.0.jar"]
-
+ENTRYPOINT ["java","-jar","target/api-flow-engine-1.0.0.jar"]
