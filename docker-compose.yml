@@ -16,7 +16,7 @@ services:
     build: .
     container_name: flow-engine-app
     environment:
-      SPRING_DATASOURCE_URL: postgres:5432/flow_engine
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flow_engine
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
       SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
