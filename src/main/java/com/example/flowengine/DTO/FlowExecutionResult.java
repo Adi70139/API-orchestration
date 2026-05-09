@@ -12,4 +12,5 @@ public class FlowExecutionResult {
     private boolean allStepsPassed;
     private List<StepExecutionResult> stepResults;
     private long totalDurationMs;
+    private Long flowExecutionId;
 }

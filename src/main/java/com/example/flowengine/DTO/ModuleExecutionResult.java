@@ -12,4 +12,5 @@ public class ModuleExecutionResult {
     private boolean allFlowsPassed;
     private List<FlowExecutionResult> flowResults;
     private long totalDurationMs;
+    private Long moduleExecutionId;
 }

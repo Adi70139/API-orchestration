@@ -4,15 +4,16 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 
 @Data
-@AllArgsConstructor
 public class StepExecutionResult {
-
     private Long stepId;
     private String stepName;
     private Integer stepOrder;
+    private String resolvedUrl;
+    private String resolvedHeadersJson;
+    private String resolvedBodyJson;
     private int statusCode;
     private String responseBody;
     private boolean success;
-    private String errorMessage; // null if success
+    private String errorMessage;
     private long durationMs;
 }
