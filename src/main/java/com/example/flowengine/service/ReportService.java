@@ -39,6 +39,8 @@ public class ReportService {
     private final FlowExecutionRepository flowExecutionRepository;
     private final ModuleExecutionRepository moduleExecutionRepository;
     private final FlowRepository flowRepository;
+    private final BulkJobRepository bulkJobRepository;
+    private final StepExecutionRepository stepExecutionRepository;
 
     public byte[] generateFlowReport(Long flowId) throws IOException {
         FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
@@ -339,5 +341,106 @@ public class ReportService {
         }
         table.addCell(labelCell);
         table.addCell(valueCell);
+    }
+
+    public byte[] generateBulkReport(Long bulkJobId) throws IOException {
+        BulkJob bulkJob = bulkJobRepository.findById(bulkJobId)
+                .orElseThrow(() -> new IllegalArgumentException("Bulk job not found: " + bulkJobId));
+
+        List<BulkJobItem> items = bulkJob.getItems();
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PdfWriter writer = new PdfWriter(baos);
+        PdfDocument pdf = new PdfDocument(writer);
+        Document doc = new Document(pdf);
+        doc.setMargins(40, 40, 40, 40);
+
+        PdfFont bold = PdfFontFactory.createFont(StandardFonts.HELVETICA_BOLD);
+        PdfFont regular = PdfFontFactory.createFont(StandardFonts.HELVETICA);
+        PdfFont mono = PdfFontFactory.createFont(StandardFonts.COURIER);
+
+        // ── Cover page ────────────────────────────────────────────────────────────
+        addHeader(doc, bold, regular, "Bulk Execution Report");
+
+        // Bulk job summary
+        long totalDuration = 0;
+        if (bulkJob.getStartedAt() != null && bulkJob.getFinishedAt() != null) {
+            totalDuration = java.time.Duration.between(bulkJob.getStartedAt(), bulkJob.getFinishedAt()).toMillis();
+        }
+        long passedCount = items.stream().filter(i -> i.getStatus() == ExecutionStatus.PASS).count();
+        long failedCount = items.stream().filter(i -> i.getStatus() == ExecutionStatus.FAIL).count();
+        long runningCount = items.stream().filter(i -> i.getStatus() == ExecutionStatus.IN_PROGRESS).count();
+
+        addSectionTitle(doc, bold, "Bulk Job Summary");
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth();
+        addSummaryRow(summary, regular, bold, "Bulk Job ID", String.valueOf(bulkJob.getId()), false);
+        addSummaryRow(summary, regular, bold, "Type", bulkJob.getType(), true);
+        addSummaryRow(summary, regular, bold, "Status", bulkJob.getStatus().name(), false);
+        addSummaryRow(summary, regular, bold, "Started At", bulkJob.getStartedAt() != null ? bulkJob.getStartedAt().format(FORMATTER) : "-", true);
+        addSummaryRow(summary, regular, bold, "Finished At", bulkJob.getFinishedAt() != null ? bulkJob.getFinishedAt().format(FORMATTER) : "-", false);
+        addSummaryRow(summary, regular, bold, "Total Duration", totalDuration + " ms", true);
+        addSummaryRow(summary, regular, bold, "Total Items", items.size() + " (" + passedCount + " passed, " + failedCount + " failed" + (runningCount > 0 ? ", " + runningCount + " still running" : "") + ")", false);
+        doc.add(summary);
+        doc.add(new Paragraph("\n").setFontSize(6));
+
+        // ── Items overview table ──────────────────────────────────────────────────
+        addSectionTitle(doc, bold, "Items Overview");
+        Table overview = new Table(UnitValue.createPercentArray(new float[]{3, 2, 2, 2})).useAllAvailableWidth();
+        addTableHeader(overview, bold, "Name", "Status", "Duration", "Execution ID");
+        boolean alt = false;
+        for (BulkJobItem item : items) {
+            DeviceRgb bg = alt ? COLOR_ROW_ALT : null;
+            addTableRow(overview, regular, bg,
+                    item.getTargetName(),
+                    item.getStatus().name(),
+                    item.getDurationMs() != null ? item.getDurationMs() + " ms" : "-",
+                    item.getExecutionId() != null ? String.valueOf(item.getExecutionId()) : "-"
+            );
+            alt = !alt;
+        }
+        doc.add(overview);
+
+        // ── Per item detail pages ─────────────────────────────────────────────────
+        for (BulkJobItem item : items) {
+            doc.add(new AreaBreak());
+
+            if ("MODULE".equals(bulkJob.getType()) && item.getExecutionId() != null) {
+                ModuleExecution moduleExecution = moduleExecutionRepository.findById(item.getExecutionId())
+                        .orElse(null);
+                if (moduleExecution != null) {
+                    addModuleSummary(doc, bold, regular, moduleExecution);
+                    List<FlowExecution> flowExecutions = moduleExecution.getFlowExecutions();
+                    if (flowExecutions != null) {
+                        for (FlowExecution fe : flowExecutions) {
+                            doc.add(new AreaBreak());
+                            addFlowSection(doc, bold, regular, mono, fe);
+                        }
+                    }
+                } else {
+                    doc.add(new Paragraph("No execution data available for: " + item.getTargetName())
+                            .setFont(regular).setFontSize(10));
+                }
+
+            } else if ("FLOW".equals(bulkJob.getType()) && item.getExecutionId() != null) {
+                FlowExecution fe = flowExecutionRepository.findById(item.getExecutionId())
+                        .orElse(null);
+                if (fe != null) {
+                    addSectionTitle(doc, bold, "Flow: " + item.getTargetName());
+                    addFlowSection(doc, bold, regular, mono, fe);
+                } else {
+                    doc.add(new Paragraph("No execution data available for: " + item.getTargetName())
+                            .setFont(regular).setFontSize(10));
+                }
+
+            } else {
+                // Still running or failed before execution was created
+                addSectionTitle(doc, bold, item.getTargetName());
+                doc.add(new Paragraph("Status: " + item.getStatus().name() + " — no execution detail available.")
+                        .setFont(regular).setFontSize(10).setFontColor(COLOR_FAIL));
+            }
+        }
+
+        doc.close();
+        return baos.toByteArray();
     }
 }

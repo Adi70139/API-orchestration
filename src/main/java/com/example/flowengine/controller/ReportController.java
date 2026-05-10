@@ -41,4 +41,17 @@ public class ReportController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
     }
+
+    /**
+     * Download PDF report for a bulk execution job.
+     * GET /report/bulk/{bulkJobId}
+     */
+    @GetMapping("/bulk/{bulkJobId}")
+    public ResponseEntity<byte[]> bulkReport(@PathVariable Long bulkJobId) throws IOException {
+        byte[] pdf = reportService.generateBulkReport(bulkJobId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"bulk-job-" + bulkJobId + "-report.pdf\"")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
+    }
 }
