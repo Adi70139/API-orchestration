@@ -4,6 +4,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import java.util.Map;
+
 @Data
 public class FlowStepRequest {
 
@@ -21,5 +23,14 @@ public class FlowStepRequest {
 
     private String headersJson; // optional, must be valid JSON object if provided
 
-    private String bodyJson;    // optional, must be valid JSON if provided
+    private String bodyJson;
+
+    private AssertionsRequest assertions;
+
+    @Data
+    public static class AssertionsRequest {
+        private Integer statusCode;                          // optional exact status code check
+        private Map<String, Object> schema;                  // optional schema: fieldName -> type
+        private Map<String, Map<String, Object>> body;       // optional field assertions
+    }     // optional, must be valid JSON if provided
 }

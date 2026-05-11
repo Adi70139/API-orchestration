@@ -1,8 +1,6 @@
 package com.example.flowengine.service;
 
-import com.example.flowengine.DTO.FlowExecutionResult;
-import com.example.flowengine.DTO.ModuleExecutionResult;
-import com.example.flowengine.DTO.StepExecutionResult;
+import com.example.flowengine.DTO.*;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
@@ -18,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -34,6 +33,7 @@ public class ExecutorService {
     private final FlowExecutionRepository flowExecutionRepository;
     private final ModuleExecutionRepository moduleExecutionRepository;
     private final StepExecutionRepository stepExecutionRepository;
+    private final AssertionEngine assertionEngine;
 
     @Transactional
     public ModuleExecutionResult runModule(Long moduleId) {
@@ -172,7 +172,43 @@ public class ExecutorService {
                 stepExecution.setSuccess(success);
                 stepExecution.setErrorMessage(success ? null : "HTTP " + statusCode);
                 stepExecution.setDurationMs(duration);
-                stepExecutionRepository.save(stepExecution); // <-- SAVE
+
+
+               // Evaluate assertions if defined
+                List<AssertionResult> assertionResults = new ArrayList<>();
+                if (step.getAssertionsJson() != null) {
+                    try {
+                        FlowStepRequest.AssertionsRequest assertions = objectMapper.readValue(
+                                step.getAssertionsJson(), FlowStepRequest.AssertionsRequest.class);
+                        assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody);
+
+                        // If any assertion failed, mark step as failed
+                        boolean assertionsPassed = assertionResults.stream().allMatch(AssertionResult::isPassed);
+                        if (!assertionsPassed) {
+                            success = false;
+                            String failedAssertions = assertionResults.stream()
+                                    .filter(a -> !a.isPassed())
+                                    .map(a -> a.getPath() + ": " + a.getMessage())
+                                    .collect(Collectors.joining("; "));
+                            stepExecution.setErrorMessage("Assertion failures: " + failedAssertions);
+                        }
+                    } catch (Exception e) {
+                        log.warn("Could not evaluate assertions for step {}: {}", step.getName(), e.getMessage());
+                    }
+                }
+
+                // Serialize assertion results to DB
+                if (!assertionResults.isEmpty()) {
+                    try {
+                        stepExecution.setAssertionResultsJson(objectMapper.writeValueAsString(assertionResults));
+                    } catch (Exception ignored) {}
+                }
+
+                stepExecution.setSuccess(success);
+                stepExecution.setStatusCode(statusCode);
+                stepExecution.setResponseBody(responseBody);
+                stepExecution.setDurationMs(duration);
+                stepExecutionRepository.save(stepExecution);
 
                 StepExecutionResult result = new StepExecutionResult();
                 result.setStepId(step.getId());
@@ -186,6 +222,12 @@ public class ExecutorService {
                 result.setSuccess(success);
                 result.setErrorMessage(success ? null : "HTTP " + statusCode);
                 result.setDurationMs(duration);
+                result.setAssertionResults(assertionResults.isEmpty() ? null : assertionResults);
+                result.setSuccess(success);
+                result.setStatusCode(statusCode);
+                result.setResponseBody(responseBody);
+                result.setDurationMs(duration);
+                result.setErrorMessage(stepExecution.getErrorMessage());
                 return result;
             }
 

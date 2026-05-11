@@ -37,6 +37,9 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String bodyJson;
 
+    @Column(columnDefinition = "TEXT")
+    private String assertionsJson;
+
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)
     @JsonBackReference

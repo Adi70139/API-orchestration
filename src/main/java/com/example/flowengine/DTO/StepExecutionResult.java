@@ -3,6 +3,8 @@ package com.example.flowengine.DTO;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class StepExecutionResult {
     private Long stepId;
@@ -16,4 +18,5 @@ public class StepExecutionResult {
     private boolean success;
     private String errorMessage;
     private long durationMs;
+    private List<AssertionResult> assertionResults;
 }

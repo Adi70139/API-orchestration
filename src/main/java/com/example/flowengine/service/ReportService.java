@@ -1,8 +1,10 @@
 package com.example.flowengine.service;
 
+import com.example.flowengine.DTO.AssertionResult;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.itextpdf.io.font.constants.StandardFonts;
 import com.itextpdf.kernel.colors.ColorConstants;
 import com.itextpdf.kernel.colors.DeviceRgb;
@@ -17,6 +19,7 @@ import com.itextpdf.layout.element.*;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -26,6 +29,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ReportService {
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm:ss");
@@ -41,7 +45,8 @@ public class ReportService {
     private final FlowRepository flowRepository;
     private final BulkJobRepository bulkJobRepository;
     private final StepExecutionRepository stepExecutionRepository;
-
+    private final ObjectMapper objectMapper;
+    
     public byte[] generateFlowReport(Long flowId) throws IOException {
         FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("No execution found for flow id: " + flowId));
@@ -244,12 +249,14 @@ public class ReportService {
                     .setBackgroundColor(COLOR_SECTION_BG)
                     .setPadding(12);
 
-            // Details table inside card
+            // Details table
             Table details = new Table(UnitValue.createPercentArray(new float[]{2, 5})).useAllAvailableWidth();
             details.setMarginTop(8);
             addDetailRow(details, bold, regular, "URL", step.getResolvedUrl(), false);
-            addDetailRow(details, bold, regular, "Status Code", step.getStatusCode() != null ? String.valueOf(step.getStatusCode()) : "-", true);
-            addDetailRow(details, bold, regular, "Duration", step.getDurationMs() != null ? step.getDurationMs() + " ms" : "-", false);
+            addDetailRow(details, bold, regular, "Status Code",
+                    step.getStatusCode() != null ? String.valueOf(step.getStatusCode()) : "-", true);
+            addDetailRow(details, bold, regular, "Duration",
+                    step.getDurationMs() != null ? step.getDurationMs() + " ms" : "-", false);
 
             if (step.getResolvedHeadersJson() != null) {
                 addDetailRow(details, bold, mono, "Headers Sent", step.getResolvedHeadersJson(), true);
@@ -267,7 +274,69 @@ public class ReportService {
                 addDetailRow(details, bold, regular, "Error", step.getErrorMessage(), false);
             }
 
+            // Add details to card first
             cardCell.add(details);
+
+            // Assertion results below details
+            if (step.getAssertionResultsJson() != null) {
+                try {
+                    List<AssertionResult> assertionResults = objectMapper.readValue(
+                            step.getAssertionResultsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(List.class, AssertionResult.class)
+                    );
+
+                    if (!assertionResults.isEmpty()) {
+                        cardCell.add(new Paragraph("Assertions")
+                                .setFont(bold).setFontSize(9).setFontColor(COLOR_HEADER_BG).setMarginTop(8));
+
+                        Table assertionTable = new Table(UnitValue.createPercentArray(new float[]{3, 1, 4}))
+                                .useAllAvailableWidth();
+
+                        assertionTable.addCell(new Cell()
+                                .add(new Paragraph("Path").setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+                        assertionTable.addCell(new Cell()
+                                .add(new Paragraph("Result").setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+                        assertionTable.addCell(new Cell()
+                                .add(new Paragraph("Message").setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+
+                        boolean altRow = false;
+                        for (AssertionResult ar : assertionResults) {
+                            DeviceRgb rowBg = altRow ? COLOR_ROW_ALT : null;
+                            DeviceRgb assertColor = ar.isPassed() ? COLOR_PASS : COLOR_FAIL;
+
+                            Cell pathCell = new Cell()
+                                    .add(new Paragraph(ar.getPath()).setFont(mono).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell resultCell = new Cell()
+                                    .add(new Paragraph(ar.isPassed() ? "PASS" : "FAIL")
+                                            .setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(assertColor)
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f))
+                                    .setTextAlignment(TextAlignment.CENTER);
+                            Cell messageCell = new Cell()
+                                    .add(new Paragraph(ar.getMessage()).setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+
+                            if (rowBg != null) {
+                                pathCell.setBackgroundColor(rowBg);
+                                messageCell.setBackgroundColor(rowBg);
+                            }
+
+                            assertionTable.addCell(pathCell);
+                            assertionTable.addCell(resultCell);
+                            assertionTable.addCell(messageCell);
+                            altRow = !altRow;
+                        }
+                        cardCell.add(assertionTable);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not deserialize assertion results for step {}", step.getStepName());
+                }
+            }
+
             card.addCell(cardCell);
             doc.add(card);
         }

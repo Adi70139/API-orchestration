@@ -5,6 +5,7 @@ import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.repository.FlowRepository;
 import com.example.flowengine.repository.FlowStepRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,7 @@ public class FlowStepService {
 
     private final FlowStepRepository flowStepRepository;
     private final FlowRepository flowRepository;
+    private final ObjectMapper objectMapper;
 
     public FlowStep create(Long flowId, FlowStepRequest request) {
         FlowDefinition flow = flowRepository.findById(flowId)
@@ -30,6 +32,7 @@ public class FlowStepService {
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
 
+        mapAssertions(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -53,6 +56,8 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
+
+        mapAssertions(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -61,5 +66,18 @@ public class FlowStepService {
             throw new IllegalArgumentException("FlowStep not found with id: " + stepId);
         }
         flowStepRepository.deleteById(stepId);
+    }
+
+    // In create() and update(), after setting other fields:
+    private void mapAssertions(FlowStep step, FlowStepRequest request) {
+        if (request.getAssertions() != null) {
+            try {
+                step.setAssertionsJson(objectMapper.writeValueAsString(request.getAssertions()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Invalid assertions format: " + e.getMessage());
+            }
+        } else {
+            step.setAssertionsJson(null);
+        }
     }
 }

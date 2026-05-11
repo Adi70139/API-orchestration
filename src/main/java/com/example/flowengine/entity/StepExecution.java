@@ -46,4 +46,7 @@ public class StepExecution {
     private String errorMessage;
 
     private Long durationMs;
+
+    @Column(columnDefinition = "TEXT")
+    private String assertionResultsJson;
 }
