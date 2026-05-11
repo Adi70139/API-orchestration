@@ -42,5 +42,17 @@ public class FlowController {
     public void deleteFlow(@PathVariable Long flowId) {
         flowService.delete(flowId);
     }
+
+    @PutMapping("/{flowId}/environment/{envId}")
+    public FlowDefinition setEnvironment(@PathVariable Long flowId,
+                                         @PathVariable Long envId) {
+        return flowService.setDefaultEnvironment(flowId, envId);
+    }
+
+    @DeleteMapping("/{flowId}/environment")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void clearEnvironment(@PathVariable Long flowId) {
+        flowService.clearDefaultEnvironment(flowId);
+    }
 }
 

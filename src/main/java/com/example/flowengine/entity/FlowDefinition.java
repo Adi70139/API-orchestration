@@ -33,4 +33,9 @@ public class FlowDefinition {
     @OrderBy("stepOrder ASC")
     @JsonManagedReference
     private List<FlowStep> steps;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_environment_id")
+    private Environment defaultEnvironment; // nullable — no env if null
+
 }

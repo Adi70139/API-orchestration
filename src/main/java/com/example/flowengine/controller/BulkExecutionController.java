@@ -16,12 +16,12 @@ public class BulkExecutionController {
 
     @PostMapping("/modules/bulk")
     public BulkJobResult runModulesBulk(@Valid @RequestBody BulkExecutionRequest request) {
-        return bulkExecutionService.startModuleBulkJob(request.getIds());
+        return bulkExecutionService.startModuleBulkJob(request.getIds(), request.getEnvIds());
     }
 
     @PostMapping("/flows/bulk")
     public BulkJobResult runFlowsBulk(@Valid @RequestBody BulkExecutionRequest request) {
-        return bulkExecutionService.startFlowBulkJob(request.getIds());
+        return bulkExecutionService.startFlowBulkJob(request.getIds(), request.getEnvIds());
     }
 
     @GetMapping("/bulk/{bulkJobId}")

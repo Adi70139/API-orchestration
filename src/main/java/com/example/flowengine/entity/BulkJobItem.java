@@ -29,5 +29,7 @@ public class BulkJobItem {
 
     private Long executionId; // moduleExecutionId or flowExecutionId once done
 
+    private Long environmentId; // environment override for this item
+
     private Long durationMs;
 }

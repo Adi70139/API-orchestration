@@ -11,4 +11,7 @@ public class FlowRequest {
     private String description;
 
     private String module;
+
+    private Long environmentId; // optional — overrides flow's default env
+
 }

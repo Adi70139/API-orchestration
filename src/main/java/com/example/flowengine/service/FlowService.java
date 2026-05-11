@@ -1,8 +1,10 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.FlowRequest;
+import com.example.flowengine.entity.Environment;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.ModuleEntity;
+import com.example.flowengine.repository.EnvironmentRepository;
 import com.example.flowengine.repository.FlowExecutionRepository;
 import com.example.flowengine.repository.FlowRepository;
 import com.example.flowengine.repository.ModuleRepository;
@@ -19,6 +21,7 @@ public class FlowService {
     private final FlowRepository flowRepository;
     private final ModuleRepository moduleRepository;
     private final FlowExecutionRepository flowExecutionRepository;
+    private final EnvironmentRepository environmentRepository;
 
     public FlowDefinition create(FlowRequest request) {
         // Find the module by name
@@ -63,5 +66,29 @@ public class FlowService {
                 .ifPresent(flowExecutionRepository::delete);
 
         flowRepository.deleteById(flowId);
+    }
+
+    public FlowDefinition setDefaultEnvironment(Long flowId, Long environmentId) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+
+        Environment env = environmentRepository.findById(environmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Environment not found: " + environmentId));
+
+        // Ensure env belongs to the same module as the flow
+        if (!env.getModule().getId().equals(flow.getModule().getId())) {
+            throw new IllegalArgumentException(
+                    "Environment does not belong to the same module as this flow");
+        }
+
+        flow.setDefaultEnvironment(env);
+        return flowRepository.save(flow);
+    }
+
+    public FlowDefinition clearDefaultEnvironment(Long flowId) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+        flow.setDefaultEnvironment(null);
+        return flowRepository.save(flow);
     }
 }

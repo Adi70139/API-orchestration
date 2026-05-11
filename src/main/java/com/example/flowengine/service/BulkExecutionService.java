@@ -30,11 +30,17 @@ public class BulkExecutionService {
     private final ModuleRepository moduleRepository;
     private final FlowRepository flowRepository;
 
-    public BulkJobResult startModuleBulkJob(List<Long> moduleIds) {
+    public BulkJobResult startModuleBulkJob(List<Long> moduleIds, List<Long> envIds) {
         BulkJob job = createJob("MODULE");
 
         List<BulkJobItem> items = new ArrayList<>();
-        for (Long moduleId : moduleIds) {
+        for (int i = 0; i < moduleIds.size(); i++) {
+            Long moduleId = moduleIds.get(i);
+            // If only one env ID, use it for all; otherwise use index mapping
+            Long envId = (envIds != null && !envIds.isEmpty()) 
+                ? (envIds.size() == 1 ? envIds.get(0) : envIds.get(i))
+                : null;
+            
             ModuleEntity module = moduleRepository.findById(moduleId)
                     .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
             BulkJobItem item = new BulkJobItem();
@@ -42,6 +48,7 @@ public class BulkExecutionService {
             item.setTargetId(moduleId);
             item.setTargetName(module.getName());
             item.setStatus(ExecutionStatus.IN_PROGRESS);
+            item.setEnvironmentId(envId);
             items.add(bulkJobItemRepository.save(item));
         }
 
@@ -57,11 +64,17 @@ public class BulkExecutionService {
         return mapToResult(job, items);
     }
 
-    public BulkJobResult startFlowBulkJob(List<Long> flowIds) {
+    public BulkJobResult startFlowBulkJob(List<Long> flowIds, List<Long> envIds) {
         BulkJob job = createJob("FLOW");
 
         List<BulkJobItem> items = new ArrayList<>();
-        for (Long flowId : flowIds) {
+        for (int i = 0; i < flowIds.size(); i++) {
+            Long flowId = flowIds.get(i);
+            // If only one env ID, use it for all; otherwise use index mapping
+            Long envId = (envIds != null && !envIds.isEmpty()) 
+                ? (envIds.size() == 1 ? envIds.get(0) : envIds.get(i))
+                : null;
+            
             FlowDefinition flow = flowRepository.findById(flowId)
                     .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
             BulkJobItem item = new BulkJobItem();
@@ -69,6 +82,7 @@ public class BulkExecutionService {
             item.setTargetId(flowId);
             item.setTargetName(flow.getName());
             item.setStatus(ExecutionStatus.IN_PROGRESS);
+            item.setEnvironmentId(envId);
             items.add(bulkJobItemRepository.save(item));
         }
 
@@ -94,7 +108,7 @@ public class BulkExecutionService {
     private void runModuleItem(BulkJobItem item) {
         long start = System.currentTimeMillis();
         try {
-            ModuleExecutionResult result = executorService.runModule(item.getTargetId());
+            ModuleExecutionResult result = executorService.runModule(item.getTargetId(), item.getEnvironmentId());
             item.setStatus(result.isAllFlowsPassed() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
             item.setExecutionId(result.getModuleExecutionId());
         } catch (Exception e) {
@@ -109,7 +123,7 @@ public class BulkExecutionService {
     private void runFlowItem(BulkJobItem item) {
         long start = System.currentTimeMillis();
         try {
-            FlowExecutionResult result = executorService.runFlow(item.getTargetId());
+            FlowExecutionResult result = executorService.runFlow(item.getTargetId(), item.getEnvironmentId());
             item.setStatus(result.isAllStepsPassed() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
             item.setExecutionId(result.getFlowExecutionId());
         } catch (Exception e) {

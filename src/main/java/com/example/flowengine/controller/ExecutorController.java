@@ -1,6 +1,7 @@
 package com.example.flowengine.controller;
 
 import com.example.flowengine.DTO.FlowExecutionResult;
+import com.example.flowengine.DTO.FlowRequest;
 import com.example.flowengine.DTO.ModuleExecutionResult;
 import com.example.flowengine.service.ExecutorService;
 import lombok.RequiredArgsConstructor;
@@ -15,11 +16,13 @@ public class ExecutorController {
 
     /**
      * Run all flows in a module.
-     * POST /execute/modules/{moduleId}
+     * POST /execute/modules/{moduleId}?envId={envId}
      */
     @PostMapping("/modules/{moduleId}")
-    public ModuleExecutionResult runModule(@PathVariable Long moduleId) {
-        return executorService.runModule(moduleId);
+    public ModuleExecutionResult runModule(
+            @PathVariable Long moduleId,
+            @RequestParam(required = false) Long envId) {
+        return executorService.runModule(moduleId, envId);
     }
 
     /**
@@ -27,7 +30,10 @@ public class ExecutorController {
      * POST /execute/flows/{flowId}
      */
     @PostMapping("/flows/{flowId}")
-    public FlowExecutionResult runFlow(@PathVariable Long flowId) {
-        return executorService.runFlow(flowId);
+    public FlowExecutionResult runFlow(
+            @PathVariable Long flowId,
+            @RequestBody(required = false) FlowRequest request) {
+        Long envId = request != null ? request.getEnvironmentId() : null;
+        return executorService.runFlow(flowId, envId);
     }
 }

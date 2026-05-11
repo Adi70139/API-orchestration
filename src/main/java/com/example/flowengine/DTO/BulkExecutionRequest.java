@@ -10,4 +10,6 @@ public class BulkExecutionRequest {
 
     @NotEmpty
     private List<Long> ids; // moduleIds or flowIds
+
+    private List<Long> envIds;
 }

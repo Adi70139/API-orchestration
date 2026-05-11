@@ -66,7 +66,7 @@ public class SchedulerService {
     private void runScheduledModule(Long moduleId) {
         log.info("Running scheduled execution for module {}", moduleId);
         try {
-            executorService.runModule(moduleId);
+            executorService.runModule(moduleId, null);
             log.info("Scheduled execution completed for module {}", moduleId);
             // TODO: notify — add notification dispatch here when implementing alerts
         } catch (Exception e) {

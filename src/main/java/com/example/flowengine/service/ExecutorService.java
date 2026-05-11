@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -34,9 +35,10 @@ public class ExecutorService {
     private final ModuleExecutionRepository moduleExecutionRepository;
     private final StepExecutionRepository stepExecutionRepository;
     private final AssertionEngine assertionEngine;
+    private final EnvironmentService environmentService;
 
     @Transactional
-    public ModuleExecutionResult runModule(Long moduleId) {
+    public ModuleExecutionResult runModule(Long moduleId,Long environmentIdOverride) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
 
@@ -54,7 +56,7 @@ public class ExecutorService {
         boolean allPassed = true;
 
         for (FlowDefinition flow : flows) {
-            FlowExecutionResult flowResult = executeFlow(flow, moduleExecution);
+            FlowExecutionResult flowResult = executeFlow(flow, moduleExecution,environmentIdOverride);
             flowResults.add(flowResult);
             if (!flowResult.isAllStepsPassed()) allPassed = false;
         }
@@ -75,14 +77,35 @@ public class ExecutorService {
     }
 
     @Transactional
-    public FlowExecutionResult runFlow(Long flowId) {
+    public FlowExecutionResult runFlow(Long flowId, Long environmentIdOverride) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
-
-        return executeFlow(flow, null);
+        return executeFlow(flow, null, environmentIdOverride);
     }
 
-    private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution) {
+    private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution,Long environmentIdOverride) {
+
+        Map<String, String> envVariables = new LinkedHashMap<>();
+        Long envId = environmentIdOverride != null
+                ? environmentIdOverride
+                : (flow.getDefaultEnvironment() != null ? flow.getDefaultEnvironment().getId() : null);
+
+        if (envId != null) {
+            envVariables = environmentService.getDecryptedVariables(envId);
+            log.info("Loaded {} env variables for flow '{}'", envVariables.size(), flow.getName());
+        }
+
+        List<String> previousResponses = new ArrayList<>();
+
+        // Seed env variables as a synthetic "step 0" response so PlaceholderUtils can resolve them
+        if (!envVariables.isEmpty()) {
+            try {
+                previousResponses.add(objectMapper.writeValueAsString(envVariables));
+            } catch (Exception e) {
+                log.warn("Could not seed env variables into context");
+            }
+        }
+
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
 
         // Delete previous execution for this flow (keep only latest)
@@ -97,7 +120,6 @@ public class ExecutorService {
         flowExecution = flowExecutionRepository.save(flowExecution);
 
         List<StepExecutionResult> stepResults = new ArrayList<>();
-        List<String> previousResponses = new ArrayList<>(); // response chain for placeholder resolution
         long flowStart = System.currentTimeMillis();
         boolean allPassed = true;
 

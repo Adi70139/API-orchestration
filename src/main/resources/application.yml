@@ -11,3 +11,8 @@ spring:
 
 server:
   port: ${PORT:8060}
+
+
+app:
+  encryption:
+    secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
