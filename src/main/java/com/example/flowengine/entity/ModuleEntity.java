@@ -20,7 +20,18 @@ public class ModuleEntity {
 
     private String description;
 
-    @OneToMany(mappedBy = "module", cascade = CascadeType.ALL)
+    @OneToMany(
+            mappedBy = "module",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
     @JsonManagedReference
     private List<FlowDefinition> flows;
+
+    @OneToMany(
+            mappedBy = "module",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
+    private List<ModuleExecution> executions;
 }

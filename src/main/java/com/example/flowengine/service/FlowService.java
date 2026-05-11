@@ -3,6 +3,7 @@ package com.example.flowengine.service;
 import com.example.flowengine.DTO.FlowRequest;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.ModuleEntity;
+import com.example.flowengine.repository.FlowExecutionRepository;
 import com.example.flowengine.repository.FlowRepository;
 import com.example.flowengine.repository.ModuleRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class FlowService {
 
     private final FlowRepository flowRepository;
     private final ModuleRepository moduleRepository;
+    private final FlowExecutionRepository flowExecutionRepository;
 
     public FlowDefinition create(FlowRequest request) {
         // Find the module by name
@@ -50,5 +52,16 @@ public class FlowService {
     public FlowDefinition getById(Long id) {
         return flowRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + id));
+    }
+
+    public void delete(Long flowId) {
+        if (!flowRepository.existsById(flowId)) {
+            throw new IllegalArgumentException("Flow not found with id: " + flowId);
+        }
+        // Clean up execution records first
+        flowExecutionRepository.findByFlowId(flowId)
+                .ifPresent(flowExecutionRepository::delete);
+
+        flowRepository.deleteById(flowId);
     }
 }

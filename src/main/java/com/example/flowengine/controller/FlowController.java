@@ -5,6 +5,7 @@ import com.example.flowengine.DTO.FlowRequest;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.service.FlowService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -34,6 +35,12 @@ public class FlowController {
     @GetMapping("/module/{moduleName}")
     public List<FlowDefinition> getFlowsByModuleName(@PathVariable String moduleName) {
         return flowService.getFlowsByModuleName(moduleName);
+    }
+
+    @DeleteMapping("/{flowId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteFlow(@PathVariable Long flowId) {
+        flowService.delete(flowId);
     }
 }
 

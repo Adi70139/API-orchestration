@@ -28,6 +28,11 @@ public class ModuleExecution {
     @Column(nullable = false)
     private ExecutionStatus status;
 
-    @OneToMany(mappedBy = "moduleExecution", fetch = FetchType.LAZY)
+    @OneToMany(
+            mappedBy = "moduleExecution",
+            fetch = FetchType.LAZY,
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
     private List<FlowExecution> flowExecutions;
 }
