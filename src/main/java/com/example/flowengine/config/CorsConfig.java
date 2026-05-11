@@ -1,6 +1,8 @@
 
 package com.example.flowengine.config;
 
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
@@ -26,5 +28,15 @@ public class CorsConfig {
         source.registerCorsConfiguration("/**", config);
 
         return new CorsFilter(source);
+    }
+
+    @Value("${spring.datasource.url}")
+    private String dbUrl;
+
+    @PostConstruct
+    public void printDbDetails() {
+        System.out.println("==============");
+        System.out.println("ACTIVE DB URL: " + dbUrl);
+        System.out.println("==============");
     }
 }
