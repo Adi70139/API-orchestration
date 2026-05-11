@@ -23,6 +23,9 @@ public class FlowStep {
     @Column(nullable = false)
     private String name;
 
+    @Column(nullable = true)
+    private String description;
+
     @NotBlank
     @Column(nullable = false)
     private String method;

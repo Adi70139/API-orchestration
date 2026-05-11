@@ -18,6 +18,8 @@ public class FlowStepRequest {
     @NotBlank
     private String method;
 
+    private String description;
+
     @NotBlank
     private String url;
 

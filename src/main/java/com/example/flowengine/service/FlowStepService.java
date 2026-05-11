@@ -27,6 +27,7 @@ public class FlowStepService {
         step.setFlow(flow);
         step.setName(request.getName());
         step.setStepOrder(request.getStepOrder());
+        step.setDescription(request.getDescription());
         step.setMethod(request.getMethod().toUpperCase());
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
@@ -52,6 +53,7 @@ public class FlowStepService {
         FlowStep step = getById(stepId);
         step.setName(request.getName());
         step.setStepOrder(request.getStepOrder());
+        step.setDescription(request.getDescription());
         step.setMethod(request.getMethod().toUpperCase());
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
