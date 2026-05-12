@@ -12,6 +12,5 @@ public class EnvironmentRequest {
     @NotBlank
     private String name;
 
-    @NotEmpty
     private Map<String, String> variables; // plain text — encrypted before storing
 }

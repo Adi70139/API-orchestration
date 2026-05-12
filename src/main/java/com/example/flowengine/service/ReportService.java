@@ -1,6 +1,9 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.AssertionResult;
+import com.example.flowengine.DTO.BulkReportDTO;
+import com.example.flowengine.DTO.FlowReportDTO;
+import com.example.flowengine.DTO.ModuleReportDTO;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
@@ -511,5 +514,139 @@ public class ReportService {
 
         doc.close();
         return baos.toByteArray();
+    }
+
+    // ── JSON Data Methods for UI ───────────────────────────────────────────────
+
+    public FlowReportDTO getFlowReportData(Long flowId) {
+        FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("No execution found for flow id: " + flowId));
+
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+
+        FlowReportDTO dto = new FlowReportDTO();
+        dto.setFlowId(flow.getId());
+        dto.setFlowName(flow.getName());
+        dto.setModuleName(flow.getModule().getName());
+        dto.setStatus(execution.getStatus().name());
+        dto.setStartedAt(execution.getStartedAt());
+        dto.setFinishedAt(execution.getFinishedAt());
+
+        if (execution.getStartedAt() != null && execution.getFinishedAt() != null) {
+            dto.setDurationMs(java.time.Duration.between(execution.getStartedAt(), execution.getFinishedAt()).toMillis());
+        }
+
+        if (execution.getStepExecutions() != null) {
+            dto.setSteps(execution.getStepExecutions().stream()
+                    .map(this::mapToStepReportDTO)
+                    .toList());
+        }
+
+        return dto;
+    }
+
+    public ModuleReportDTO getModuleReportData(Long moduleExecutionId) {
+        ModuleExecution moduleExecution = moduleExecutionRepository.findById(moduleExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("Module execution not found: " + moduleExecutionId));
+
+        ModuleReportDTO dto = new ModuleReportDTO();
+        dto.setModuleExecutionId(moduleExecution.getId());
+        dto.setModuleName(moduleExecution.getModule().getName());
+        dto.setStatus(moduleExecution.getStatus().name());
+        dto.setStartedAt(moduleExecution.getStartedAt());
+        dto.setFinishedAt(moduleExecution.getFinishedAt());
+
+        if (moduleExecution.getStartedAt() != null && moduleExecution.getFinishedAt() != null) {
+            dto.setDurationMs(java.time.Duration.between(moduleExecution.getStartedAt(), moduleExecution.getFinishedAt()).toMillis());
+        }
+
+        List<FlowExecution> flowExecutions = moduleExecution.getFlowExecutions();
+        if (flowExecutions != null) {
+            dto.setTotalFlows(flowExecutions.size());
+            dto.setPassedFlows((int) flowExecutions.stream().filter(f -> f.getStatus() == ExecutionStatus.PASS).count());
+            dto.setFailedFlows(dto.getTotalFlows() - dto.getPassedFlows());
+
+            dto.setFlows(flowExecutions.stream()
+                    .map(fe -> {
+                        FlowReportDTO flowDTO = new FlowReportDTO();
+                        flowDTO.setFlowId(fe.getFlow().getId());
+                        flowDTO.setFlowName(fe.getFlow().getName());
+                        flowDTO.setModuleName(fe.getFlow().getModule().getName());
+                        flowDTO.setStatus(fe.getStatus().name());
+                        flowDTO.setStartedAt(fe.getStartedAt());
+                        flowDTO.setFinishedAt(fe.getFinishedAt());
+
+                        if (fe.getStartedAt() != null && fe.getFinishedAt() != null) {
+                            flowDTO.setDurationMs(java.time.Duration.between(fe.getStartedAt(), fe.getFinishedAt()).toMillis());
+                        }
+
+                        if (fe.getStepExecutions() != null) {
+                            flowDTO.setSteps(fe.getStepExecutions().stream()
+                                    .map(this::mapToStepReportDTO)
+                                    .toList());
+                        }
+
+                        return flowDTO;
+                    })
+                    .toList());
+        }
+
+        return dto;
+    }
+
+    public BulkReportDTO getBulkReportData(Long bulkJobId) {
+        BulkJob bulkJob = bulkJobRepository.findById(bulkJobId)
+                .orElseThrow(() -> new IllegalArgumentException("Bulk job not found: " + bulkJobId));
+
+        List<BulkJobItem> items = bulkJob.getItems();
+
+        BulkReportDTO dto = new BulkReportDTO();
+        dto.setBulkJobId(bulkJob.getId());
+        dto.setType(bulkJob.getType());
+        dto.setStatus(bulkJob.getStatus().name());
+        dto.setStartedAt(bulkJob.getStartedAt());
+        dto.setFinishedAt(bulkJob.getFinishedAt());
+
+        if (bulkJob.getStartedAt() != null && bulkJob.getFinishedAt() != null) {
+            dto.setDurationMs(java.time.Duration.between(bulkJob.getStartedAt(), bulkJob.getFinishedAt()).toMillis());
+        }
+
+        dto.setTotalItems(items.size());
+        dto.setPassedItems((int) items.stream().filter(i -> i.getStatus() == ExecutionStatus.PASS).count());
+        dto.setFailedItems(dto.getTotalItems() - dto.getPassedItems());
+
+        dto.setItems(items.stream()
+                .map(item -> {
+                    BulkReportDTO.BulkItemReportDTO itemDTO = new BulkReportDTO.BulkItemReportDTO();
+                    itemDTO.setTargetId(item.getTargetId());
+                    itemDTO.setTargetName(item.getTargetName());
+                    itemDTO.setStatus(item.getStatus().name());
+                    itemDTO.setExecutionId(item.getExecutionId());
+                    itemDTO.setEnvironmentId(item.getEnvironmentId());
+                    itemDTO.setDurationMs(item.getDurationMs());
+                    return itemDTO;
+                })
+                .toList());
+
+        return dto;
+    }
+
+    private FlowReportDTO.StepReportDTO mapToStepReportDTO(StepExecution step) {
+        FlowReportDTO.StepReportDTO dto = new FlowReportDTO.StepReportDTO();
+        dto.setStepId(step.getStepId());
+        dto.setStepName(step.getStepName());
+        dto.setStepOrder(step.getStepOrder());
+        dto.setMethod(""); // TODO: Get from FlowStep entity if needed
+        dto.setUrl(""); // TODO: Get from FlowStep entity if needed
+        dto.setStatus(step.isSuccess() ? "PASSED" : "FAILED");
+        dto.setStatusCode(step.getStatusCode());
+        dto.setResponseBody(step.getResponseBody());
+        dto.setErrorMessage(step.getErrorMessage());
+        dto.setDurationMs(step.getDurationMs());
+        dto.setResolvedUrl(step.getResolvedUrl());
+        dto.setResolvedHeadersJson(step.getResolvedHeadersJson());
+        dto.setResolvedBodyJson(step.getResolvedBodyJson());
+        return dto;
     }
 }

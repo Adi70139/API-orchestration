@@ -1,5 +1,8 @@
 package com.example.flowengine.controller;
 
+import com.example.flowengine.DTO.BulkReportDTO;
+import com.example.flowengine.DTO.FlowReportDTO;
+import com.example.flowengine.DTO.ModuleReportDTO;
 import com.example.flowengine.service.ReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -59,5 +62,35 @@ public class ReportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"bulk-job-" + bulkJobId + "-report.pdf\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
+    }
+
+    /**
+     * Get JSON data for flow execution report (for UI display).
+     * GET /report/flows/{flowId}/data
+     */
+    @GetMapping("/flows/{flowId}/data")
+    @Operation(summary = "Get flow report data", description = "Get JSON data for the latest execution of a flow for UI display.")
+    public FlowReportDTO getFlowReportData(@PathVariable Long flowId) {
+        return reportService.getFlowReportData(flowId);
+    }
+
+    /**
+     * Get JSON data for module execution report (for UI display).
+     * GET /report/module-executions/{moduleExecutionId}/data
+     */
+    @GetMapping("/module-executions/{moduleExecutionId}/data")
+    @Operation(summary = "Get module report data", description = "Get JSON data for a module execution for UI display.")
+    public ModuleReportDTO getModuleReportData(@PathVariable Long moduleExecutionId) {
+        return reportService.getModuleReportData(moduleExecutionId);
+    }
+
+    /**
+     * Get JSON data for bulk execution report (for UI display).
+     * GET /report/bulk/{bulkJobId}/data
+     */
+    @GetMapping("/bulk/{bulkJobId}/data")
+    @Operation(summary = "Get bulk job report data", description = "Get JSON data for a bulk execution job for UI display.")
+    public BulkReportDTO getBulkReportData(@PathVariable Long bulkJobId) {
+        return reportService.getBulkReportData(bulkJobId);
     }
 }
