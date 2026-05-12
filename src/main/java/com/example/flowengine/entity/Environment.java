@@ -22,6 +22,6 @@ public class Environment {
     @JoinColumn(name = "module_id", nullable = false)
     private ModuleEntity module;
 
-    @Column(columnDefinition = "TEXT", nullable = false)
+    @Column(columnDefinition = "TEXT", nullable = true)
     private String variablesJson; // encrypted JSON: {"baseUrl": "enc...", "username": "enc..."}
 }

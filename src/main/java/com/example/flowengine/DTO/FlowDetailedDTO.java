@@ -1,8 +1,8 @@
 package com.example.flowengine.DTO;
 
 import lombok.Data;
-
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class FlowDetailedDTO {
@@ -22,6 +22,15 @@ public class FlowDetailedDTO {
         private Integer stepOrder;
         private String method;
         private String url;
+        private String headersJson;
+        private String bodyJson;
+        private AssertionsDTO assertions; // structured, not raw string
+    }
+
+    @Data
+    public static class AssertionsDTO {
+        private Integer statusCode;
+        private Map<String, Object> schema;
+        private Map<String, Map<String, Object>> body;
     }
 }
-

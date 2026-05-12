@@ -9,6 +9,7 @@ import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.repository.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +26,7 @@ public class FlowService {
     private final FlowExecutionRepository flowExecutionRepository;
     private final EnvironmentRepository environmentRepository;
     private final FlowStepRepository flowStepRepository;
+    private final ObjectMapper objectMapper;
 
     public FlowDTO create(FlowRequest request) {
         // Find the module by name
@@ -189,6 +191,21 @@ public class FlowService {
                         stepDTO.setStepOrder(step.getStepOrder());
                         stepDTO.setMethod(step.getMethod());
                         stepDTO.setUrl(step.getUrl());
+                        stepDTO.setHeadersJson(step.getHeadersJson());
+                        stepDTO.setBodyJson(step.getBodyJson());
+
+                        // Deserialize assertionsJson into structured object
+                        if (step.getAssertionsJson() != null) {
+                            try {
+                                FlowDetailedDTO.AssertionsDTO assertions = objectMapper.readValue(
+                                        step.getAssertionsJson(),
+                                        FlowDetailedDTO.AssertionsDTO.class
+                                );
+                                stepDTO.setAssertions(assertions);
+                            } catch (Exception e) {
+                                // malformed json — skip silently
+                            }
+                        }
                         return stepDTO;
                     })
                     .collect(Collectors.toList()));

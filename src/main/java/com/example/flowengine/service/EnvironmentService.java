@@ -37,7 +37,10 @@ public class EnvironmentService {
         Environment env = new Environment();
         env.setModule(module);
         env.setName(request.getName().toUpperCase());
-        env.setVariablesJson(encryptVariables(request.getVariables()));
+
+        if (request.getVariables() != null && !request.getVariables().isEmpty()) {
+            env.setVariablesJson(encryptVariables(request.getVariables()));
+        }
 
         return toResponse(environmentRepository.save(env));
     }
@@ -45,7 +48,13 @@ public class EnvironmentService {
     public EnvironmentResponse update(Long envId, EnvironmentRequest request) {
         Environment env = getEntityById(envId);
         env.setName(request.getName().toUpperCase());
-        env.setVariablesJson(encryptVariables(request.getVariables()));
+
+        if (request.getVariables() != null && !request.getVariables().isEmpty()) {
+            env.setVariablesJson(encryptVariables(request.getVariables()));
+        } else {
+            env.setVariablesJson(null);
+        }
+
         return toResponse(environmentRepository.save(env));
     }
 
@@ -70,6 +79,9 @@ public class EnvironmentService {
      */
     public Map<String, String> getDecryptedVariables(Long envId) {
         Environment env = getEntityById(envId);
+        if (env.getVariablesJson() == null || env.getVariablesJson().isEmpty()) {
+            return new LinkedHashMap<>();
+        }
         return decryptVariables(env.getVariablesJson());
     }
 
@@ -108,7 +120,11 @@ public class EnvironmentService {
         response.setId(env.getId());
         response.setName(env.getName());
         response.setModuleId(env.getModule().getId());
-        response.setVariables(decryptVariables(env.getVariablesJson()));
+        if (env.getVariablesJson() == null || env.getVariablesJson().isEmpty()) {
+            response.setVariables(new LinkedHashMap<>());
+        } else {
+            response.setVariables(decryptVariables(env.getVariablesJson()));
+        }
         return response;
     }
 }
