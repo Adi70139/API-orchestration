@@ -1,8 +1,10 @@
 
 package com.example.flowengine.controller;
 
+import com.example.flowengine.DTO.DuplicateFlowRequest;
+import com.example.flowengine.DTO.FlowDTO;
+import com.example.flowengine.DTO.FlowDetailedDTO;
 import com.example.flowengine.DTO.FlowRequest;
-import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.service.FlowService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -18,22 +20,22 @@ public class FlowController {
     private final FlowService flowService;
 
     @PostMapping
-    public FlowDefinition create(@RequestBody FlowRequest flow) {
+    public FlowDTO create(@RequestBody FlowRequest flow) {
         return flowService.create(flow);
     }
 
     @GetMapping
-    public List<FlowDefinition> getAll() {
+    public List<FlowDTO> getAll() {
         return flowService.getAll();
     }
 
     @GetMapping("/{id}")
-    public FlowDefinition getById(@PathVariable Long id) {
+    public FlowDetailedDTO getById(@PathVariable Long id) {
         return flowService.getById(id);
     }
 
     @GetMapping("/module/{moduleName}")
-    public List<FlowDefinition> getFlowsByModuleName(@PathVariable String moduleName) {
+    public List<FlowDTO> getFlowsByModuleName(@PathVariable String moduleName) {
         return flowService.getFlowsByModuleName(moduleName);
     }
 
@@ -44,7 +46,7 @@ public class FlowController {
     }
 
     @PutMapping("/{flowId}/environment/{envId}")
-    public FlowDefinition setEnvironment(@PathVariable Long flowId,
+    public FlowDTO setEnvironment(@PathVariable Long flowId,
                                          @PathVariable Long envId) {
         return flowService.setDefaultEnvironment(flowId, envId);
     }
@@ -53,6 +55,14 @@ public class FlowController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void clearEnvironment(@PathVariable Long flowId) {
         flowService.clearDefaultEnvironment(flowId);
+    }
+
+    @PostMapping("/{flowId}/duplicate")
+    @ResponseStatus(HttpStatus.CREATED)
+    public FlowDTO duplicate(@PathVariable Long flowId,
+                                    @RequestBody(required = false) DuplicateFlowRequest request) {
+        if (request == null) request = new DuplicateFlowRequest();
+        return flowService.duplicateFlow(flowId, request);
     }
 }
 
