@@ -6,6 +6,8 @@ import com.example.flowengine.entity.ModuleSchedule;
 import com.example.flowengine.repository.ModuleRepository;
 import com.example.flowengine.repository.ModuleScheduleRepository;
 import com.example.flowengine.service.SchedulerService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/schedule/modules")
 @RequiredArgsConstructor
+@Tag(name = "Scheduler", description = "Manage module schedules")
 public class ScheduleController {
 
     private final ModuleScheduleRepository moduleScheduleRepository;
@@ -22,6 +25,7 @@ public class ScheduleController {
 
     @PostMapping("/{moduleId}")
     @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Create a schedule", description = "Create or update a schedule for a module.")
     public ModuleSchedule setSchedule(@PathVariable Long moduleId,
                                       @Valid @RequestBody ScheduleRequest request) {
         ModuleEntity module = moduleRepository.findById(moduleId)
@@ -41,6 +45,7 @@ public class ScheduleController {
     }
 
     @GetMapping("/{moduleId}")
+    @Operation(summary = "Get a schedule", description = "Get the schedule for a specific module.")
     public ModuleSchedule getSchedule(@PathVariable Long moduleId) {
         return moduleScheduleRepository.findByModuleId(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("No schedule found for module: " + moduleId));
@@ -48,6 +53,7 @@ public class ScheduleController {
 
     @DeleteMapping("/{moduleId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete a schedule", description = "Deactivate the schedule for a specific module.")
     public void deleteSchedule(@PathVariable Long moduleId) {
         ModuleSchedule schedule = moduleScheduleRepository.findByModuleId(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("No schedule found for module: " + moduleId));
