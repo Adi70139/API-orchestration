@@ -3,6 +3,7 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.FlowRequest;
 import com.example.flowengine.DTO.ModuleResponse;
+import com.example.flowengine.entity.Environment;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.entity.ModuleExecution;
@@ -21,6 +22,7 @@ public class ModuleService {
     private final FlowRepository flowRepository;
     private final ModuleScheduleRepository moduleScheduleRepository;
     private final ModuleExecutionRepository moduleExecutionRepository;
+    private final EnvironmentRepository environmentRepository;
 
     public ModuleEntity create(ModuleEntity module) {
         return repository.save(module);
@@ -54,15 +56,25 @@ public class ModuleService {
             throw new IllegalArgumentException("Module not found with id: " + moduleId);
         }
 
-        // Delete flow executions (and their step executions via cascade) for all flows in this module
+        moduleScheduleRepository.findByModuleId(moduleId)
+                .ifPresent(moduleScheduleRepository::delete);
+
+        // Clear environment references from all flows in this module to avoid FK constraint violation
         List<FlowDefinition> flows = flowRepository.findByModuleId(moduleId);
+        for (FlowDefinition flow : flows) {
+            flow.setDefaultEnvironment(null);
+            flowRepository.save(flow);
+        }
+
+        // Delete environments after clearing references
+        List<Environment> environments = environmentRepository.findByModuleId(moduleId);
+        environmentRepository.deleteAll(environments);
+
+        // Delete flow executions (and their step executions via cascade) for all flows in this module
         for (FlowDefinition flow : flows) {
             flowExecutionRepository.findByFlowId(flow.getId())
                     .ifPresent(fe -> flowExecutionRepository.delete(fe));
         }
-
-        moduleScheduleRepository.findByModuleId(moduleId)
-                .ifPresent(moduleScheduleRepository::delete);
 
         repository.deleteById(moduleId);
     }

@@ -16,3 +16,22 @@ server:
 app:
   encryption:
     secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
+
+
+
+llm:
+  provider: ${LLM_PROVIDER:ollama}
+
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:llama3.2}
+
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+  model: ${GROQ_MODEL:llama-3.1-8b-instant}
+
+
+  logging:
+    level:
+      com.example.flowengine.service.AssertionGeneratorService: DEBUG
