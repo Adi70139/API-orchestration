@@ -34,4 +34,8 @@ public class ModuleEntity {
             orphanRemoval = true
     )
     private List<ModuleExecution> executions;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_environment_id")
+    private Environment defaultEnvironment;
 }

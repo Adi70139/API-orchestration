@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -37,7 +38,7 @@ public class ExecutorService {
     private final AssertionEngine assertionEngine;
     private final EnvironmentService environmentService;
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ModuleExecutionResult runModule(Long moduleId,Long environmentIdOverride) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
@@ -76,7 +77,7 @@ public class ExecutorService {
         return result;
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public FlowExecutionResult runFlow(Long flowId, Long environmentIdOverride) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
@@ -88,21 +89,30 @@ public class ExecutorService {
         Map<String, String> envVariables = new LinkedHashMap<>();
         Long envId = environmentIdOverride != null
                 ? environmentIdOverride
-                : (flow.getDefaultEnvironment() != null ? flow.getDefaultEnvironment().getId() : null);
+                : (flow.getDefaultEnvironment() != null
+                ? flow.getDefaultEnvironment().getId()
+                : null);
 
+        // Single load with try-catch — never fails the run
         if (envId != null) {
-            envVariables = environmentService.getDecryptedVariables(envId);
-            log.info("Loaded {} env variables for flow '{}'", envVariables.size(), flow.getName());
+            try {
+                envVariables = environmentService.getDecryptedVariables(envId);
+                log.info("Loaded {} env variables for flow '{}'", envVariables.size(), flow.getName());
+            } catch (Exception e) {
+                log.warn("Could not load env {} for flow '{}' — running without env variables: {}",
+                        envId, flow.getName(), e.getMessage());
+            }
         }
 
+        // Seed env variables into previousResponses FIRST so placeholders resolve
         List<String> previousResponses = new ArrayList<>();
-
-        // Seed env variables as a synthetic "step 0" response so PlaceholderUtils can resolve them
         if (!envVariables.isEmpty()) {
             try {
                 previousResponses.add(objectMapper.writeValueAsString(envVariables));
+                log.info("Seeded {} env variables into context for flow '{}'",
+                        envVariables.size(), flow.getName());
             } catch (Exception e) {
-                log.warn("Could not seed env variables into context");
+                log.warn("Could not seed env variables into context for flow '{}'", flow.getName());
             }
         }
 
