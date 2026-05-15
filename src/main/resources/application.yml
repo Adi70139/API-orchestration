@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL}
-    username: ${SPRING_DATASOURCE_USERNAME}
-    password: ${SPRING_DATASOURCE_PASSWORD}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/flow_engine}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
 
   jpa:
     hibernate:
@@ -37,6 +37,6 @@ groq:
   model: ${GROQ_MODEL:llama-3.1-8b-instant}
 
 
-  logging:
-    level:
-      com.example.flowengine.service.AssertionGeneratorService: DEBUG
+logging:
+  level:
+    com.example.flowengine.service.AssertionGeneratorService: DEBUG
