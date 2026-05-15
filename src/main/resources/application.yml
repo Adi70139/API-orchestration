@@ -9,6 +9,11 @@ spring:
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
     show-sql: ${SPRING_JPA_SHOW_SQL:true}
 
+  servlet:
+    multipart:
+        max-file-size: 5MB
+        max-request-size: 50MB
+
 server:
   port: ${PORT:8060}
 
