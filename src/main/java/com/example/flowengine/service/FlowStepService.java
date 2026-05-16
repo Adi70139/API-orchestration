@@ -23,10 +23,13 @@ public class FlowStepService {
         FlowDefinition flow = flowRepository.findById(flowId)
             .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
 
+        Integer maxOrder =
+                flowStepRepository.findMaxStepOrderByFlowId(flowId);
+
         FlowStep step = new FlowStep();
         step.setFlow(flow);
         step.setName(request.getName());
-        step.setStepOrder(request.getStepOrder());
+        step.setStepOrder(maxOrder + 1);
         step.setDescription(request.getDescription());
         step.setMethod(request.getMethod().toUpperCase());
         step.setUrl(request.getUrl());
@@ -52,7 +55,6 @@ public class FlowStepService {
     public FlowStep update(Long stepId, FlowStepRequest request) {
         FlowStep step = getById(stepId);
         step.setName(request.getName());
-        step.setStepOrder(request.getStepOrder());
         step.setDescription(request.getDescription());
         step.setMethod(request.getMethod().toUpperCase());
         step.setUrl(request.getUrl());

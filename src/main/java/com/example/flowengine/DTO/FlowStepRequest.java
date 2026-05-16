@@ -12,9 +12,6 @@ public class FlowStepRequest {
     @NotBlank
     private String name;
 
-    @NotNull
-    private Integer stepOrder;
-
     @NotBlank
     private String method;
 
