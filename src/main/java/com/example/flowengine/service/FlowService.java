@@ -11,6 +11,7 @@ import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class FlowService {
 
     private final FlowRepository flowRepository;
@@ -48,6 +50,40 @@ public class FlowService {
 
         flow = flowRepository.save(flow);
         return mapToFlowDTO(flow);
+    }
+
+    public FlowDTO update(FlowRequest request, Long flowId) {
+
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Flow not found with id: " + flowId));
+
+        ModuleEntity module = moduleRepository.findByName(request.getModule())
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Module not found with name: " + request.getModule()));
+
+        Optional<FlowDefinition> duplicateFlow =
+                flowRepository.findByNameAndModule_Id(
+                        request.getName(),
+                        module.getId()
+                );
+
+        if (duplicateFlow.isPresent()
+                && !duplicateFlow.get().getId().equals(flowId)) {
+
+            throw new IllegalArgumentException(
+                    "Flow already exists with same name in module"
+            );
+        }
+
+        log.info("Updating flow {} — name: '{}', desc: '{}'", flowId, request.getName(), request.getDescription());
+
+        flow.setName(request.getName());
+        flow.setDescription(request.getDescription());
+
+        FlowDefinition updatedFlow = flowRepository.save(flow);
+
+        return mapToFlowDTO(updatedFlow);
     }
 
     public List<FlowDTO> getFlowsByModuleName(String moduleName) {

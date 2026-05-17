@@ -75,5 +75,12 @@ public class FlowController {
         if (request == null) request = new DuplicateFlowRequest();
         return flowService.duplicateFlow(flowId, request);
     }
+
+    @PutMapping("/{flowId}")
+    @Operation(summary = "Update a Flow", description = "Update the basic details of a flow.")
+    public FlowDTO setEnvironment(@PathVariable Long flowId,
+                                            @RequestBody FlowRequest flowRequest) {
+        return flowService.update(flowRequest, flowId);
+    }
 }
 

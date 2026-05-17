@@ -3,6 +3,7 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.FlowRequest;
 import com.example.flowengine.DTO.ModuleResponse;
+import com.example.flowengine.DTO.ModuleUpdateRequest;
 import com.example.flowengine.entity.Environment;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.ModuleEntity;
@@ -26,6 +27,28 @@ public class ModuleService {
 
     public ModuleEntity create(ModuleEntity module) {
         return repository.save(module);
+    }
+
+    public ModuleResponse update(ModuleUpdateRequest module, Long moduleId) {
+
+       ModuleEntity existingModule = repository.findById(moduleId)
+                .orElseThrow(() -> new IllegalArgumentException("Module not found with id: " + moduleId));
+
+        existingModule.setName(module.getName());
+        existingModule.setDescription(module.getDescription());
+        repository.save(existingModule);
+
+        ModuleResponse dto = new ModuleResponse();
+        dto.setId(existingModule.getId());
+        dto.setName(existingModule.getName());
+        dto.setDescription(existingModule.getDescription());
+        dto.setFlowCount(
+                existingModule.getFlows() != null
+                        ? existingModule.getFlows().size()
+                        : 0
+        );
+
+        return dto;
     }
 
     public List<ModuleResponse> getAll() {

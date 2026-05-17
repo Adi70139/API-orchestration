@@ -2,6 +2,7 @@
 package com.example.flowengine.controller;
 
 import com.example.flowengine.DTO.ModuleResponse;
+import com.example.flowengine.DTO.ModuleUpdateRequest;
 import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.service.ModuleService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +25,12 @@ public class ModuleController {
     @Operation(summary = "Create module", description = "Create a new module.")
     public ModuleEntity create(@RequestBody ModuleEntity module) {
         return service.create(module);
+    }
+
+    @PutMapping("/{moduleId}")
+    @Operation(summary = "Update module", description = "Update a module.")
+    public ModuleResponse update(@RequestBody ModuleUpdateRequest module,@PathVariable Long moduleId) {
+        return service.update(module,moduleId);
     }
 
     @GetMapping
