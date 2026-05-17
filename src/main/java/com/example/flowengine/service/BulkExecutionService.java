@@ -10,18 +10,21 @@ import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class BulkExecutionService {
 
     private final ExecutorService executorService;
@@ -29,7 +32,59 @@ public class BulkExecutionService {
     private final BulkJobItemRepository bulkJobItemRepository;
     private final ModuleRepository moduleRepository;
     private final FlowRepository flowRepository;
-    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
+    private final TransactionTemplate transactionTemplate;
+
+    @Value("${bulk.executor.thread-pool-size:10}")
+    private int threadPoolSize;
+
+    // Dedicated pool — never shares with ForkJoinPool or scheduler threads
+    private ThreadPoolExecutor bulkExecutor;
+
+    public BulkExecutionService(ExecutorService executorService,
+                                BulkJobRepository bulkJobRepository,
+                                BulkJobItemRepository bulkJobItemRepository,
+                                ModuleRepository moduleRepository,
+                                FlowRepository flowRepository,
+                                PlatformTransactionManager transactionManager) {
+        this.executorService = executorService;
+        this.bulkJobRepository = bulkJobRepository;
+        this.bulkJobItemRepository = bulkJobItemRepository;
+        this.moduleRepository = moduleRepository;
+        this.flowRepository = flowRepository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
+
+    @PostConstruct
+    public void init() {
+        bulkExecutor = new ThreadPoolExecutor(
+                threadPoolSize,
+                threadPoolSize,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(100), // bounded queue — rejects if overloaded
+                new ThreadFactory() {
+                    private int count = 0;
+                    public Thread newThread(Runnable r) {
+                        return new Thread(r, "bulk-executor-" + ++count);
+                    }
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy() // back-pressure: caller runs if queue full
+        );
+        log.info("BulkExecutionService initialized with thread pool size {}", threadPoolSize);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("Shutting down bulk executor — waiting for active jobs to complete");
+        bulkExecutor.shutdown();
+        try {
+            if (!bulkExecutor.awaitTermination(60, TimeUnit.SECONDS)) {
+                bulkExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            bulkExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     public BulkJobResult startModuleBulkJob(List<Long> moduleIds, List<Long> envIds) {
         BulkJob job = createJob("MODULE");
@@ -37,7 +92,6 @@ public class BulkExecutionService {
         List<BulkJobItem> items = new ArrayList<>();
         for (int i = 0; i < moduleIds.size(); i++) {
             Long moduleId = moduleIds.get(i);
-            // Safely resolve envId — null if not provided or explicitly null at this index
             Long envId = resolveEnvId(envIds, i);
 
             ModuleEntity module = moduleRepository.findById(moduleId)
@@ -53,11 +107,11 @@ public class BulkExecutionService {
         }
 
         List<CompletableFuture<Void>> futures = items.stream()
-                .map(item -> CompletableFuture.runAsync(() -> runModuleItem(item)))
+                .map(item -> CompletableFuture.runAsync(() -> runModuleItem(item), bulkExecutor))
                 .collect(Collectors.toList());
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> finalizeBulkJob(job.getId()));
+                .thenRunAsync(() -> finalizeBulkJob(job.getId()), bulkExecutor);
 
         return mapToResult(job, items);
     }
@@ -83,11 +137,11 @@ public class BulkExecutionService {
         }
 
         List<CompletableFuture<Void>> futures = items.stream()
-                .map(item -> CompletableFuture.runAsync(() -> runFlowItem(item)))
+                .map(item -> CompletableFuture.runAsync(() -> runFlowItem(item), bulkExecutor))
                 .collect(Collectors.toList());
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> finalizeBulkJob(job.getId()));
+                .thenRunAsync(() -> finalizeBulkJob(job.getId()), bulkExecutor);
 
         return mapToResult(job, items);
     }
@@ -100,25 +154,20 @@ public class BulkExecutionService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /**
-     * Safely resolve env ID by index.
-     * Returns null if envIds is null, empty, or the value at index is null.
-     */
     private Long resolveEnvId(List<Long> envIds, int index) {
         if (envIds == null || envIds.isEmpty()) return null;
         if (index >= envIds.size()) return null;
-        return envIds.get(index); // can be null — that's fine
+        return envIds.get(index);
     }
 
     private void runModuleItem(BulkJobItem item) {
         long start = System.currentTimeMillis();
         try {
-            // Pass null env if not set — ExecutorService handles fallback gracefully
             ModuleExecutionResult result = executorService.runModule(
                     item.getTargetId(), item.getEnvironmentId());
             item.setStatus(result.isAllFlowsPassed() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
             item.setExecutionId(result.getModuleExecutionId());
-            log.info("Module {} completed with status {}", item.getTargetId(), item.getStatus());
+            log.info("Module {} completed — {}", item.getTargetId(), item.getStatus());
         } catch (Exception e) {
             log.error("Bulk module execution failed for module {}: {}", item.getTargetId(), e.getMessage());
             item.setStatus(ExecutionStatus.FAIL);
@@ -135,7 +184,7 @@ public class BulkExecutionService {
                     item.getTargetId(), item.getEnvironmentId());
             item.setStatus(result.isAllStepsPassed() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
             item.setExecutionId(result.getFlowExecutionId());
-            log.info("Flow {} completed with status {}", item.getTargetId(), item.getStatus());
+            log.info("Flow {} completed — {}", item.getTargetId(), item.getStatus());
         } catch (Exception e) {
             log.error("Bulk flow execution failed for flow {}: {}", item.getTargetId(), e.getMessage());
             item.setStatus(ExecutionStatus.FAIL);
@@ -145,30 +194,21 @@ public class BulkExecutionService {
         }
     }
 
-    /**
-     * Finalize bulk job — runs on CompletableFuture thread so needs its own transaction.
-     * This is why @Transactional is here specifically.
-     */
     private void finalizeBulkJob(Long jobId) {
-        org.springframework.transaction.support.TransactionTemplate txTemplate =
-                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
-
-        txTemplate.execute(status -> {
+        transactionTemplate.execute(status -> {
             BulkJob job = bulkJobRepository.findById(jobId).orElseThrow();
             List<BulkJobItem> items = job.getItems();
 
             long failedCount = items.stream()
                     .filter(i -> i.getStatus() == ExecutionStatus.FAIL).count();
 
-            log.info("Finalizing bulk job {}: {}/{} items failed", jobId, failedCount, items.size());
-
             BulkJobStatus finalStatus;
             if (failedCount == 0) {
                 finalStatus = BulkJobStatus.COMPLETED;
             } else if (failedCount == items.size()) {
-                finalStatus = BulkJobStatus.FAILED; // all failed
+                finalStatus = BulkJobStatus.FAILED;
             } else {
-                finalStatus = BulkJobStatus.PARTIAL_FAIL; // some passed, some failed
+                finalStatus = BulkJobStatus.PARTIAL_FAIL;
             }
 
             job.setStatus(finalStatus);

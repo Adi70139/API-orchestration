@@ -11,6 +11,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - flow-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flow_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   app:
     build: .
@@ -21,12 +27,38 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-postgres}
       SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}
       SPRING_PROFILES_ACTIVE: docker
+
+      # Security
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:?ENCRYPTION_SECRET must be set}
+
+      # HTTP client tuning — raise for parallel module runs
+      HTTP_MAX_CONNECTIONS: ${HTTP_MAX_CONNECTIONS:-20}
+      HTTP_MAX_CONNECTIONS_PER_HOST: ${HTTP_MAX_CONNECTIONS_PER_HOST:-10}
+      HTTP_MAX_CONCURRENT_REQUESTS: ${HTTP_MAX_CONCURRENT_REQUESTS:-20}
+      HTTP_MAX_CONCURRENT_REQUESTS_PER_HOST: ${HTTP_MAX_CONCURRENT_REQUESTS_PER_HOST:-10}
+      HTTP_CONNECT_TIMEOUT: ${HTTP_CONNECT_TIMEOUT:-10}
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-120}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-30}
+      HTTP_KEEP_ALIVE_MINUTES: ${HTTP_KEEP_ALIVE_MINUTES:-5}
+
+      # Thread pools
+      SCHEDULER_POOL_SIZE: ${SCHEDULER_POOL_SIZE:-20}
+      BULK_EXECUTOR_POOL_SIZE: ${BULK_EXECUTOR_POOL_SIZE:-10}
+
+      # LLM
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-deepseek-coder:6.7b}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
     ports:
       - "8060:8060"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy  # waits for pg_isready, not just container start
     networks:
       - flow-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:

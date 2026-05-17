@@ -11,18 +11,36 @@ spring:
 
   servlet:
     multipart:
-        max-file-size: 5MB
-        max-request-size: 50MB
+      max-file-size: 5MB
+      max-request-size: 50MB
 
 server:
   port: ${PORT:8060}
-
 
 app:
   encryption:
     secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
 
+# OkHttp client configuration
+http:
+  client:
+    connect-timeout-seconds: ${HTTP_CONNECT_TIMEOUT:10}
+    read-timeout-seconds: ${HTTP_READ_TIMEOUT:120}
+    write-timeout-seconds: ${HTTP_WRITE_TIMEOUT:30}
+    max-connections: ${HTTP_MAX_CONNECTIONS:20}
+    max-connections-per-host: ${HTTP_MAX_CONNECTIONS_PER_HOST:10}
+    keep-alive-minutes: ${HTTP_KEEP_ALIVE_MINUTES:5}
+    max-concurrent-requests: ${HTTP_MAX_CONCURRENT_REQUESTS:20}
+    max-concurrent-requests-per-host: ${HTTP_MAX_CONCURRENT_REQUESTS_PER_HOST:10}
 
+# Scheduler thread pool (handles scheduled triggers + bulk job orchestration)
+scheduler:
+  thread-pool-size: ${SCHEDULER_POOL_SIZE:20}
+
+# Bulk execution dedicated thread pool
+bulk:
+  executor:
+    thread-pool-size: ${BULK_EXECUTOR_POOL_SIZE:10}
 
 llm:
   provider: ${LLM_PROVIDER:ollama}
@@ -35,7 +53,6 @@ groq:
   api:
     key: ${GROQ_API_KEY:}
   model: ${GROQ_MODEL:llama-3.1-8b-instant}
-
 
 logging:
   level:

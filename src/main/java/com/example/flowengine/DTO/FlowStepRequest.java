@@ -1,5 +1,6 @@
 package com.example.flowengine.DTO;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
@@ -33,6 +34,6 @@ public class FlowStepRequest {
     public static class AssertionsRequest {
         private Integer statusCode;                          // optional exact status code check
         private Map<String, Object> schema;                  // optional schema: fieldName -> type
-        private Map<String, Map<String, Object>> body;       // optional field assertions
+        private JsonNode body;       // optional field assertions
     }     // optional, must be valid JSON if provided
 }

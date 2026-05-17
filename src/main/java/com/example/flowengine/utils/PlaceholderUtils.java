@@ -57,11 +57,39 @@ public class PlaceholderUtils {
     }
 
     /**
+     * Resolve placeholders in a single string value without throwing on failure.
+     * Used for assertion values — if a placeholder can't be resolved, returns
+     * the original template so the assertion fails with a meaningful mismatch
+     * rather than blowing up the whole execution.
+     */
+    public static String resolveValue(String template, List<String> previousResponses) {
+        if (template == null || !template.contains("{")) return template;
+
+        Map<String, String> lookup = buildLookupMap(previousResponses);
+
+        StringBuffer result = new StringBuffer();
+        Matcher matcher = PLACEHOLDER_PATTERN.matcher(template);
+
+        while (matcher.find()) {
+            String placeholder = matcher.group(1);
+            String value = lookup.get(placeholder);
+            if (value != null) {
+                matcher.appendReplacement(result, Matcher.quoteReplacement(value));
+            } else {
+                // Leave unresolved placeholder as-is — assertion will fail with a clear mismatch
+                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group(0)));
+            }
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    /**
      * Flatten all previous step response bodies into a single key->value map.
      * Supports dot-notation paths e.g. "user.id" -> "42"
      * Later responses override earlier ones on key conflict.
      */
-    private static Map<String, String> buildLookupMap(List<String> previousResponses) {
+    public static Map<String, String> buildLookupMap(List<String> previousResponses) {
         Map<String, String> map = new LinkedHashMap<>();
         for (String responseBody : previousResponses) {
             if (responseBody == null || responseBody.isBlank()) continue;

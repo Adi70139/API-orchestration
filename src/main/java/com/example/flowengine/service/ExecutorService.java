@@ -45,7 +45,6 @@ public class ExecutorService {
 
         List<FlowDefinition> flows = flowRepository.findByModuleId(moduleId);
 
-        // Create module execution record
         ModuleExecution moduleExecution = new ModuleExecution();
         moduleExecution.setModule(module);
         moduleExecution.setStartedAt(LocalDateTime.now());
@@ -62,7 +61,6 @@ public class ExecutorService {
             if (!flowResult.isAllStepsPassed()) allPassed = false;
         }
 
-        // Update module execution record
         moduleExecution.setFinishedAt(LocalDateTime.now());
         moduleExecution.setStatus(allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
         moduleExecutionRepository.save(moduleExecution);
@@ -84,14 +82,13 @@ public class ExecutorService {
         return executeFlow(flow, null, environmentIdOverride);
     }
 
-    private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution,Long environmentIdOverride) {
+    private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution, Long environmentIdOverride) {
 
         Map<String, String> envVariables = new LinkedHashMap<>();
         Long envId = environmentIdOverride != null
                 ? environmentIdOverride
                 : (flow.getDefaultEnvironment() != null ? flow.getDefaultEnvironment().getId() : null);
 
-        // Single load with try-catch — never fails the run
         if (envId != null) {
             try {
                 envVariables = environmentService.getDecryptedVariables(envId);
@@ -107,18 +104,13 @@ public class ExecutorService {
         if (!envVariables.isEmpty()) {
             try {
                 previousResponses.add(objectMapper.writeValueAsString(envVariables));
-                log.info("Seeded {} env variables into context for flow '{}'",
-                        envVariables.size(), flow.getName());
+                log.info("Seeded {} env variables into context for flow '{}'", envVariables.size(), flow.getName());
             } catch (Exception e) {
                 log.warn("Could not seed env variables into context for flow '{}'", flow.getName());
             }
         }
 
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
-
-        // Delete previous execution for this flow (keep only latest)
-        flowExecutionRepository.findByFlowId(flow.getId())
-                .ifPresent(flowExecutionRepository::delete);
 
         FlowExecution flowExecution = new FlowExecution();
         flowExecution.setFlow(flow);
@@ -142,7 +134,6 @@ public class ExecutorService {
             stepResults.add(stepResult);
 
             if (stepResult.isSuccess()) {
-                // Add this step's response to the chain for subsequent steps
                 previousResponses.add(stepResult.getResponseBody());
             } else {
                 allPassed = false;
@@ -294,7 +285,7 @@ public class ExecutorService {
                     try {
                         FlowStepRequest.AssertionsRequest assertions = objectMapper.readValue(
                                 step.getAssertionsJson(), FlowStepRequest.AssertionsRequest.class);
-                        assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody);
+                        assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody, previousResponses);
 
                         boolean assertionsPassed = assertionResults.stream().allMatch(AssertionResult::isPassed);
                         if (!assertionsPassed) {

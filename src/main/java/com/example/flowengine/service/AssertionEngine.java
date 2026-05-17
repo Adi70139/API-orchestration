@@ -2,6 +2,7 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.AssertionResult;
 import com.example.flowengine.DTO.FlowStepRequest.AssertionsRequest;
+import com.example.flowengine.utils.PlaceholderUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -19,13 +20,18 @@ public class AssertionEngine {
 
     /**
      * Evaluate all assertions against the HTTP response.
+     * previousResponses: accumulated response bodies from prior steps (same as ExecutorService uses).
+     * Assertion values support {placeholder} syntax — resolved before comparison.
      * Returns list of AssertionResult — one per assertion checked.
      */
     public List<AssertionResult> evaluate(AssertionsRequest assertions,
                                           int actualStatusCode,
-                                          String responseBody) {
+                                          String responseBody,
+                                          List<String> previousResponses) {
         List<AssertionResult> results = new ArrayList<>();
         if (assertions == null) return results;
+
+        List<String> context = previousResponses != null ? previousResponses : List.of();
 
         // 1. Status code check
         if (assertions.getStatusCode() != null) {
@@ -53,19 +59,20 @@ public class AssertionEngine {
             }
         }
 
-        // 2. Schema validation
+        // 2. Schema validation (structural — no placeholders needed here)
         if (assertions.getSchema() != null && root != null) {
             validateSchema("schema", assertions.getSchema(), root, results);
         }
 
-        // 3. Field-level body assertions
-        if (assertions.getBody() != null && root != null) {
-            for (Map.Entry<String, Map<String, Object>> entry : assertions.getBody().entrySet()) {
+        // 3. Field-level body assertions (values support {placeholder} syntax)
+        if (assertions.getBody() != null && root != null && assertions.getBody().isObject()) {
+            final JsonNode rootFinal = root; // effectively final for lambda capture
+            assertions.getBody().fields().forEachRemaining(entry -> {
                 String path = entry.getKey();
-                Map<String, Object> operators = entry.getValue();
-                JsonNode node = resolvePath(root, path);
-                evaluateFieldAssertions("body." + path, node, operators, results);
-            }
+                JsonNode operatorsNode = entry.getValue();
+                JsonNode node = resolvePath(rootFinal, path);
+                evaluateFieldAssertions("body." + path, node, operatorsNode, context, results);
+            });
         }
 
         return results;
@@ -90,7 +97,6 @@ public class AssertionEngine {
             }
 
             if (expected instanceof String) {
-                // Leaf — type check
                 String expectedType = (String) expected;
                 boolean passed = matchesType(child, expectedType);
                 results.add(new AssertionResult(path, passed,
@@ -99,7 +105,6 @@ public class AssertionEngine {
                                 : "Expected type '" + expectedType + "' but got '" + resolveType(child) + "'"
                 ));
             } else if (expected instanceof Map) {
-                // Nested object — recurse
                 if (!child.isObject()) {
                     results.add(new AssertionResult(path, false,
                             "Expected nested object at '" + key + "' but got '" + resolveType(child) + "'"));
@@ -112,13 +117,22 @@ public class AssertionEngine {
 
     // ── Field assertion evaluation ────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
     private void evaluateFieldAssertions(String path, JsonNode node,
-                                         Map<String, Object> operators,
+                                         JsonNode operatorsNode,
+                                         List<String> context,
                                          List<AssertionResult> results) {
-        for (Map.Entry<String, Object> op : operators.entrySet()) {
+        if (operatorsNode == null || !operatorsNode.isObject()) return;
+        var it = operatorsNode.fields();
+        while (it.hasNext()) {
+            var op = it.next();
             String operator = op.getKey();
-            Object expected = op.getValue();
+            JsonNode expectedNode = op.getValue();
+            // Extract expected as plain string or primitive — keep as text for comparison
+            Object expected = expectedNode.isTextual() ? expectedNode.asText()
+                    : expectedNode.isNumber()  ? expectedNode.numberValue()
+                    : expectedNode.isBoolean() ? expectedNode.booleanValue()
+                    : expectedNode.isArray()   ? objectMapper.convertValue(expectedNode, List.class)
+                    : expectedNode.asText();
 
             switch (operator) {
                 case "exists" -> {
@@ -150,7 +164,8 @@ public class AssertionEngine {
                         results.add(new AssertionResult(path, false, "Field is missing, cannot check equals"));
                     } else {
                         String actual = node.asText();
-                        String exp = String.valueOf(expected);
+                        // Resolve placeholder — e.g. "{name}" pulls from prior step responses
+                        String exp = PlaceholderUtils.resolveValue(String.valueOf(expected), context);
                         boolean passed = actual.equals(exp);
                         results.add(new AssertionResult(path, passed,
                                 passed
@@ -164,7 +179,7 @@ public class AssertionEngine {
                         results.add(new AssertionResult(path, false, "Field is missing, cannot check notEquals"));
                     } else {
                         String actual = node.asText();
-                        String exp = String.valueOf(expected);
+                        String exp = PlaceholderUtils.resolveValue(String.valueOf(expected), context);
                         boolean passed = !actual.equals(exp);
                         results.add(new AssertionResult(path, passed,
                                 passed
@@ -178,7 +193,7 @@ public class AssertionEngine {
                         results.add(new AssertionResult(path, false, "Field is missing, cannot check contains"));
                     } else {
                         String actual = node.asText();
-                        String exp = String.valueOf(expected);
+                        String exp = PlaceholderUtils.resolveValue(String.valueOf(expected), context);
                         boolean passed = actual.contains(exp);
                         results.add(new AssertionResult(path, passed,
                                 passed
@@ -193,7 +208,8 @@ public class AssertionEngine {
                     } else {
                         try {
                             double actual = node.asDouble();
-                            double exp = Double.parseDouble(String.valueOf(expected));
+                            String expStr = PlaceholderUtils.resolveValue(String.valueOf(expected), context);
+                            double exp = Double.parseDouble(expStr);
                             boolean passed = actual > exp;
                             results.add(new AssertionResult(path, passed,
                                     passed
@@ -212,7 +228,8 @@ public class AssertionEngine {
                     } else {
                         try {
                             double actual = node.asDouble();
-                            double exp = Double.parseDouble(String.valueOf(expected));
+                            String expStr = PlaceholderUtils.resolveValue(String.valueOf(expected), context);
+                            double exp = Double.parseDouble(expStr);
                             boolean passed = actual < exp;
                             results.add(new AssertionResult(path, passed,
                                     passed
@@ -231,8 +248,9 @@ public class AssertionEngine {
                     } else {
                         String actual = node.asText();
                         List<Object> options = (List<Object>) expected;
+                        // Resolve placeholders in each option value
                         boolean passed = options.stream()
-                                .map(String::valueOf)
+                                .map(o -> PlaceholderUtils.resolveValue(String.valueOf(o), context))
                                 .anyMatch(actual::equals);
                         results.add(new AssertionResult(path, passed,
                                 passed
@@ -249,10 +267,6 @@ public class AssertionEngine {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /**
-     * Resolve a dot-notation path in a JsonNode.
-     * e.g. "address.city" -> node.get("address").get("city")
-     */
     private JsonNode resolvePath(JsonNode root, String path) {
         String[] parts = path.split("\\.");
         JsonNode current = root;
