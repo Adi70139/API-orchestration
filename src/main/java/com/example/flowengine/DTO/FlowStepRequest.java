@@ -26,6 +26,9 @@ public class FlowStepRequest {
 
     private AssertionsRequest assertions;
 
+    private Integer retryCount;    // null = use default (0)
+    private Integer retryDelayMs;
+
     @Data
     public static class AssertionsRequest {
         private Integer statusCode;                          // optional exact status code check

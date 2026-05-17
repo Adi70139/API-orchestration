@@ -43,6 +43,12 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String assertionsJson;
 
+    @Column(nullable = false)
+    private Integer retryCount = 0;      // 0 = no retries, max enforced at 5
+
+    @Column(nullable = false)
+    private Integer retryDelayMs = 1000;
+
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)
     @JsonBackReference

@@ -57,7 +57,7 @@ public class ExecutorService {
         boolean allPassed = true;
 
         for (FlowDefinition flow : flows) {
-            FlowExecutionResult flowResult = executeFlow(flow, moduleExecution,environmentIdOverride);
+            FlowExecutionResult flowResult = executeFlow(flow, moduleExecution, environmentIdOverride);
             flowResults.add(flowResult);
             if (!flowResult.isAllStepsPassed()) allPassed = false;
         }
@@ -89,9 +89,7 @@ public class ExecutorService {
         Map<String, String> envVariables = new LinkedHashMap<>();
         Long envId = environmentIdOverride != null
                 ? environmentIdOverride
-                : (flow.getDefaultEnvironment() != null
-                ? flow.getDefaultEnvironment().getId()
-                : null);
+                : (flow.getDefaultEnvironment() != null ? flow.getDefaultEnvironment().getId() : null);
 
         // Single load with try-catch — never fails the run
         if (envId != null) {
@@ -140,7 +138,7 @@ public class ExecutorService {
             stepExecution.setStepName(step.getName());
             stepExecution.setStepOrder(step.getStepOrder());
 
-            StepExecutionResult stepResult = executeStep(step, previousResponses, stepExecution);
+            StepExecutionResult stepResult = executeStepWithRetry(step, previousResponses, stepExecution);
             stepResults.add(stepResult);
 
             if (stepResult.isSuccess()) {
@@ -165,6 +163,92 @@ public class ExecutorService {
         result.setStepResults(stepResults);
         result.setTotalDurationMs(System.currentTimeMillis() - flowStart);
         return result;
+    }
+
+    /**
+     * Wraps executeStep with retry logic.
+     * Retries only on network errors (Exception) and 5xx responses.
+     * Never retries 4xx (client error) or assertion failures (deterministic).
+     */
+    private StepExecutionResult executeStepWithRetry(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
+        int maxAttempts = 1 + Math.max(0, step.getRetryCount());
+        int delayMs = step.getRetryDelayMs();
+
+        List<RetryAttemptResult> attempts = new ArrayList<>();
+        StepExecutionResult lastResult = null;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (attempt > 1) {
+                log.info("Retrying step '{}' — attempt {}/{} after {}ms delay",
+                        step.getName(), attempt, maxAttempts, delayMs);
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+            lastResult = executeStep(step, previousResponses, stepExecution);
+
+            // Record this attempt
+            RetryAttemptResult attemptResult = new RetryAttemptResult();
+            attemptResult.setAttempt(attempt);
+            attemptResult.setStatusCode(lastResult.getStatusCode());
+            attemptResult.setResponseBody(lastResult.getResponseBody());
+            attemptResult.setErrorMessage(lastResult.getErrorMessage());
+            attemptResult.setSuccess(lastResult.isSuccess());
+            attemptResult.setDurationMs(lastResult.getDurationMs());
+            attempts.add(attemptResult);
+
+            if (lastResult.isSuccess()) {
+                if (attempt > 1) {
+                    log.info("Step '{}' succeeded on attempt {}/{}", step.getName(), attempt, maxAttempts);
+                }
+                break;
+            }
+
+            // Don't retry 4xx — client error, won't self-heal
+            if (lastResult.getStatusCode() != null
+                    && lastResult.getStatusCode() >= 400
+                    && lastResult.getStatusCode() < 500) {
+                log.warn("Step '{}' returned {} — not retrying (4xx client error)",
+                        step.getName(), lastResult.getStatusCode());
+                break;
+            }
+
+            // Don't retry assertion failures — server responded correctly, they're deterministic
+            if (lastResult.getErrorMessage() != null
+                    && lastResult.getErrorMessage().startsWith("Assertion failures")) {
+                log.warn("Step '{}' failed assertions — not retrying", step.getName());
+                break;
+            }
+
+            if (attempt < maxAttempts) {
+                log.warn("Step '{}' failed on attempt {}/{}: {}",
+                        step.getName(), attempt, maxAttempts, lastResult.getErrorMessage());
+            }
+        }
+
+        if (attempts.size() > 1) {
+            log.error("Step '{}' completed after {} attempts — final status: {}",
+                    step.getName(), attempts.size(), lastResult.isSuccess() ? "SUCCESS" : "FAILED");
+        }
+
+        // Persist retry metadata to StepExecution
+        stepExecution.setTotalAttempts(attempts.size());
+        if (attempts.size() > 1) {
+            try {
+                stepExecution.setRetryAttemptsJson(objectMapper.writeValueAsString(attempts));
+            } catch (Exception ignored) {}
+        }
+        stepExecutionRepository.save(stepExecution);
+
+        // Attach retry attempts to result for immediate API response
+        if (attempts.size() > 1) {
+            lastResult.setRetryAttempts(attempts);
+        }
+        return lastResult;
     }
 
     private StepExecutionResult executeStep(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
@@ -205,8 +289,6 @@ public class ExecutorService {
                 stepExecution.setErrorMessage(success ? null : "HTTP " + statusCode);
                 stepExecution.setDurationMs(duration);
 
-
-               // Evaluate assertions if defined
                 List<AssertionResult> assertionResults = new ArrayList<>();
                 if (step.getAssertionsJson() != null) {
                     try {
@@ -214,7 +296,6 @@ public class ExecutorService {
                                 step.getAssertionsJson(), FlowStepRequest.AssertionsRequest.class);
                         assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody);
 
-                        // If any assertion failed, mark step as failed
                         boolean assertionsPassed = assertionResults.stream().allMatch(AssertionResult::isPassed);
                         if (!assertionsPassed) {
                             success = false;
@@ -229,7 +310,6 @@ public class ExecutorService {
                     }
                 }
 
-                // Serialize assertion results to DB
                 if (!assertionResults.isEmpty()) {
                     try {
                         stepExecution.setAssertionResultsJson(objectMapper.writeValueAsString(assertionResults));
@@ -240,7 +320,7 @@ public class ExecutorService {
                 stepExecution.setStatusCode(statusCode);
                 stepExecution.setResponseBody(responseBody);
                 stepExecution.setDurationMs(duration);
-                stepExecutionRepository.save(stepExecution);
+                // Note: stepExecution is saved by executeStepWithRetry after retry loop completes
 
                 StepExecutionResult result = new StepExecutionResult();
                 result.setStepId(step.getId());
@@ -252,13 +332,8 @@ public class ExecutorService {
                 result.setStatusCode(statusCode);
                 result.setResponseBody(responseBody);
                 result.setSuccess(success);
-                result.setErrorMessage(success ? null : "HTTP " + statusCode);
                 result.setDurationMs(duration);
                 result.setAssertionResults(assertionResults.isEmpty() ? null : assertionResults);
-                result.setSuccess(success);
-                result.setStatusCode(statusCode);
-                result.setResponseBody(responseBody);
-                result.setDurationMs(duration);
                 result.setErrorMessage(stepExecution.getErrorMessage());
                 return result;
             }
@@ -268,7 +343,6 @@ public class ExecutorService {
             stepExecution.setSuccess(false);
             stepExecution.setErrorMessage(e.getMessage());
             stepExecution.setDurationMs(duration);
-            stepExecutionRepository.save(stepExecution); // <-- SAVE even on failure
 
             StepExecutionResult result = new StepExecutionResult();
             result.setStepId(step.getId());
@@ -285,7 +359,6 @@ public class ExecutorService {
             stepExecution.setSuccess(false);
             stepExecution.setErrorMessage(e.getMessage());
             stepExecution.setDurationMs(duration);
-            stepExecutionRepository.save(stepExecution); // <-- SAVE even on exception
 
             StepExecutionResult result = new StepExecutionResult();
             result.setStepId(step.getId());

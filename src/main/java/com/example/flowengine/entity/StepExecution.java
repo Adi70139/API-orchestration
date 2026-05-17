@@ -49,4 +49,12 @@ public class StepExecution {
 
     @Column(columnDefinition = "TEXT")
     private String assertionResultsJson;
+
+    // Stores all retry attempts as JSON array — null if step succeeded on first try
+    @Column(columnDefinition = "TEXT")
+    private String retryAttemptsJson;
+
+    // Total number of attempts made (1 = no retries)
+    @Column(nullable = false)
+    private Integer totalAttempts = 1;
 }

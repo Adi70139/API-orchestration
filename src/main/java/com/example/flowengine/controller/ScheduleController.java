@@ -1,5 +1,6 @@
 package com.example.flowengine.controller;
 
+import com.example.flowengine.DTO.ModuleScheduleResponse;
 import com.example.flowengine.DTO.ScheduleRequest;
 import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.entity.ModuleSchedule;
@@ -26,8 +27,8 @@ public class ScheduleController {
     @PostMapping("/{moduleId}")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary = "Create a schedule", description = "Create or update a schedule for a module.")
-    public ModuleSchedule setSchedule(@PathVariable Long moduleId,
-                                      @Valid @RequestBody ScheduleRequest request) {
+    public ModuleScheduleResponse setSchedule(@PathVariable Long moduleId,
+                                              @Valid @RequestBody ScheduleRequest request) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
 
@@ -39,9 +40,13 @@ public class ScheduleController {
         schedule.setTimezone(request.getTimezone());
         schedule.setActive(true);
         schedule = moduleScheduleRepository.save(schedule);
-
         schedulerService.registerSchedule(schedule);
-        return schedule;
+
+        ModuleScheduleResponse response = new ModuleScheduleResponse();
+        response.setTime(schedule.getTime());
+        response.setTimezone(schedule.getTimezone());
+        response.setActive(schedule.isActive());
+        return response;
     }
 
     @GetMapping("/{moduleId}")

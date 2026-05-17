@@ -1,6 +1,7 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.AssertionResult;
+import com.example.flowengine.DTO.RetryAttemptResult;
 import com.example.flowengine.DTO.BulkReportDTO;
 import com.example.flowengine.DTO.FlowReportDTO;
 import com.example.flowengine.DTO.ModuleReportDTO;
@@ -49,7 +50,7 @@ public class ReportService {
     private final BulkJobRepository bulkJobRepository;
     private final StepExecutionRepository stepExecutionRepository;
     private final ObjectMapper objectMapper;
-    
+
     public byte[] generateFlowReport(Long flowId) throws IOException {
         FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("No execution found for flow id: " + flowId));
@@ -647,6 +648,20 @@ public class ReportService {
         dto.setResolvedUrl(step.getResolvedUrl());
         dto.setResolvedHeadersJson(step.getResolvedHeadersJson());
         dto.setResolvedBodyJson(step.getResolvedBodyJson());
+        dto.setTotalAttempts(step.getTotalAttempts() != null ? step.getTotalAttempts() : 1);
+
+        // Deserialize retry attempts if present
+        if (step.getRetryAttemptsJson() != null) {
+            try {
+                List<RetryAttemptResult> retryAttempts = objectMapper.readValue(
+                        step.getRetryAttemptsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, RetryAttemptResult.class)
+                );
+                dto.setRetryAttempts(retryAttempts);
+            } catch (Exception e) {
+                log.warn("Could not deserialize retry attempts for step {}: {}", step.getStepName(), e.getMessage());
+            }
+        }
         return dto;
     }
 }

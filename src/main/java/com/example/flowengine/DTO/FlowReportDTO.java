@@ -31,6 +31,8 @@ public class FlowReportDTO {
         private String resolvedUrl;
         private String resolvedHeadersJson;
         private String resolvedBodyJson;
+        private Integer totalAttempts;               // how many attempts were made
+        private List<RetryAttemptResult> retryAttempts;
     }
 }
 
