@@ -130,6 +130,8 @@ public class ExecutorService {
             stepExecution.setStepName(step.getName());
             stepExecution.setStepOrder(step.getStepOrder());
 
+             //️ Steps are intentionally sequential — previousResponses is not thread safe.
+            // Do NOT convert this to parallelStream without replacing ArrayList with CopyOnWriteArrayList
             StepExecutionResult stepResult = executeStepWithRetry(step, previousResponses, stepExecution);
             stepResults.add(stepResult);
 

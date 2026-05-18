@@ -52,7 +52,7 @@ public class ReportService {
     private final ObjectMapper objectMapper;
 
     public byte[] generateFlowReport(Long flowId) throws IOException {
-        FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
+        FlowExecution execution = flowExecutionRepository.findLatestByFlowId(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("No execution found for flow id: " + flowId));
 
         FlowDefinition flow = flowRepository.findById(flowId)
@@ -520,7 +520,7 @@ public class ReportService {
     // ── JSON Data Methods for UI ───────────────────────────────────────────────
 
     public FlowReportDTO getFlowReportData(Long flowId) {
-        FlowExecution execution = flowExecutionRepository.findByFlowId(flowId)
+        FlowExecution execution = flowExecutionRepository.findLatestByFlowId(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("No execution found for flow id: " + flowId));
 
         FlowDefinition flow = flowRepository.findById(flowId)

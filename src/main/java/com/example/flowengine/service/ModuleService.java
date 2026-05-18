@@ -1,4 +1,3 @@
-
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.FlowRequest;
@@ -31,7 +30,7 @@ public class ModuleService {
 
     public ModuleResponse update(ModuleUpdateRequest module, Long moduleId) {
 
-       ModuleEntity existingModule = repository.findById(moduleId)
+        ModuleEntity existingModule = repository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found with id: " + moduleId));
 
         existingModule.setName(module.getName());
@@ -52,23 +51,18 @@ public class ModuleService {
     }
 
     public List<ModuleResponse> getAll() {
-
         return repository.findAll()
                 .stream()
                 .map(module -> {
-
                     ModuleResponse dto = new ModuleResponse();
-
                     dto.setId(module.getId());
                     dto.setName(module.getName());
                     dto.setDescription(module.getDescription());
-
                     dto.setFlowCount(
                             module.getFlows() != null
                                     ? module.getFlows().size()
                                     : 0
                     );
-
                     return dto;
                 })
                 .toList();
@@ -82,7 +76,7 @@ public class ModuleService {
         moduleScheduleRepository.findByModuleId(moduleId)
                 .ifPresent(moduleScheduleRepository::delete);
 
-        // Clear environment references from all flows in this module to avoid FK constraint violation
+        // Clear environment references from all flows to avoid FK constraint violation
         List<FlowDefinition> flows = flowRepository.findByModuleId(moduleId);
         for (FlowDefinition flow : flows) {
             flow.setDefaultEnvironment(null);
@@ -93,10 +87,11 @@ public class ModuleService {
         List<Environment> environments = environmentRepository.findByModuleId(moduleId);
         environmentRepository.deleteAll(environments);
 
-        // Delete flow executions (and their step executions via cascade) for all flows in this module
+        // Delete all flow executions (and their step executions via cascade) for all flows
         for (FlowDefinition flow : flows) {
-            flowExecutionRepository.findByFlowId(flow.getId())
-                    .ifPresent(fe -> flowExecutionRepository.delete(fe));
+            flowExecutionRepository.deleteAll(
+                    flowExecutionRepository.findByFlowIdOrderByStartedAtDesc(flow.getId())
+            );
         }
 
         repository.deleteById(moduleId);

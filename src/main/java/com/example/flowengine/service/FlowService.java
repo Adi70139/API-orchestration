@@ -33,13 +33,13 @@ public class FlowService {
     public FlowDTO create(FlowRequest request) {
         // Find the module by name
         ModuleEntity module = moduleRepository.findByName(request.getModule())
-            .orElseThrow(() -> new IllegalArgumentException("Module not found with name: " + request.getModule()));
+                .orElseThrow(() -> new IllegalArgumentException("Module not found with name: " + request.getModule()));
 
         // Check for duplicate flows within the same module
         Optional<FlowDefinition> existingFlow = flowRepository.findByNameAndModule_Id(request.getName(), module.getId());
         if (existingFlow.isPresent()) {
-            throw new IllegalArgumentException("Flow with name '" + request.getName() + 
-                "' already exists in module '" + module.getName() + "'");
+            throw new IllegalArgumentException("Flow with name '" + request.getName() +
+                    "' already exists in module '" + module.getName() + "'");
         }
 
         // Create new FlowDefinition
@@ -86,6 +86,8 @@ public class FlowService {
         return mapToFlowDTO(updatedFlow);
     }
 
+
+
     public List<FlowDTO> getFlowsByModuleName(String moduleName) {
         return flowRepository.findByModule_Name(moduleName).stream()
                 .map(this::mapToFlowDTO)
@@ -100,7 +102,7 @@ public class FlowService {
 
     public FlowDetailedDTO getById(Long id) {
         FlowDefinition flow = flowRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + id));
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + id));
         return mapToFlowDetailedDTO(flow);
     }
 
@@ -108,9 +110,9 @@ public class FlowService {
         if (!flowRepository.existsById(flowId)) {
             throw new IllegalArgumentException("Flow not found with id: " + flowId);
         }
-        // Clean up execution records first
-        flowExecutionRepository.findByFlowId(flowId)
-                .ifPresent(flowExecutionRepository::delete);
+        // Clean up all execution records before deleting the flow
+        flowExecutionRepository.findByFlowIdOrderByStartedAtDesc(flowId)
+                .forEach(flowExecutionRepository::delete);
 
         flowRepository.deleteById(flowId);
     }
@@ -178,7 +180,7 @@ public class FlowService {
             newStep.setUrl(originalStep.getUrl());
             newStep.setHeadersJson(originalStep.getHeadersJson());
             newStep.setBodyJson(originalStep.getBodyJson());
-          //  newStep.setRequiredParams(originalStep.getRequiredParams());
+            //  newStep.setRequiredParams(originalStep.getRequiredParams());
             newStep.setAssertionsJson(originalStep.getAssertionsJson());
             flowStepRepository.save(newStep);
         }
