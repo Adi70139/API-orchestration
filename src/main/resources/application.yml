@@ -6,8 +6,16 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
     show-sql: ${SPRING_JPA_SHOW_SQL:true}
+
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true   # treats existing DB as already at V1 baseline
+    baseline-version: 1         # V1 = baseline, so V2+ will run on existing DBs
+    locations: classpath:db/migration
+    validate-on-migrate: true
 
   servlet:
     multipart:
