@@ -1,5 +1,6 @@
 package com.example.flowengine.controller;
 
+import com.example.flowengine.DTO.DuplicateFlowStepRequest;
 import com.example.flowengine.DTO.FlowStepRequest;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.service.FlowStepService;
@@ -48,6 +49,15 @@ public class FlowStepController {
                            @PathVariable Long stepId,
                            @Valid @RequestBody FlowStepRequest request) {
         return flowStepService.update(stepId, request);
+    }
+
+    @PostMapping("/{stepId}/duplicate")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Duplicate a step", description = "Duplicate an existing step in the same flow")
+    public FlowStep duplicate(@PathVariable Long flowId,
+                              @PathVariable Long stepId,
+                              @RequestBody(required = false) DuplicateFlowStepRequest request) {
+        return flowStepService.duplicate(flowId, stepId, request);
     }
 
     @DeleteMapping("/{stepId}")

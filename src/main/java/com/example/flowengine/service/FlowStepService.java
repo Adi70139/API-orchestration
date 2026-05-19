@@ -1,5 +1,6 @@
 package com.example.flowengine.service;
 
+import com.example.flowengine.DTO.DuplicateFlowStepRequest;
 import com.example.flowengine.DTO.FlowStepRequest;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.FlowStep;
@@ -66,6 +67,37 @@ public class FlowStepService {
         mapRetryConfig(step, request);
         mapAssertions(step, request);
         return flowStepRepository.save(step);
+    }
+
+    public FlowStep duplicate(Long flowId, Long stepId, DuplicateFlowStepRequest request) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
+
+        FlowStep original = getById(stepId);
+        if (!original.getFlow().getId().equals(flowId)) {
+            throw new IllegalArgumentException("FlowStep with id " + stepId + " does not belong to flow: " + flowId);
+        }
+
+        Integer maxOrder = flowStepRepository.findMaxStepOrderByFlowId(flowId);
+        String newName = (request != null && request.getName() != null && !request.getName().isBlank())
+                ? request.getName()
+                : "Copy of " + original.getName();
+
+        FlowStep duplicate = new FlowStep();
+        duplicate.setFlow(flow);
+        duplicate.setName(newName);
+        duplicate.setStepOrder(maxOrder + 1);
+        duplicate.setDescription(original.getDescription());
+        duplicate.setMethod(original.getMethod());
+        duplicate.setUrl(original.getUrl());
+        duplicate.setHeadersJson(original.getHeadersJson());
+        duplicate.setBodyJson(original.getBodyJson());
+        duplicate.setAssertionsJson(original.getAssertionsJson());
+        duplicate.setRetryCount(original.getRetryCount());
+        duplicate.setRetryDelayMs(original.getRetryDelayMs());
+        duplicate.setInitialDelayMs(original.getInitialDelayMs());
+
+        return flowStepRepository.save(duplicate);
     }
 
     public void delete(Long stepId) {

@@ -270,6 +270,22 @@ PUT /flows/{flowId}/steps/{stepId}
 
 ---
 
+### Duplicate a Step
+```
+POST /flows/{flowId}/steps/{stepId}/duplicate
+```
+**Request Body:** optional. If `name` is omitted, the new step is named `Copy of {originalName}`.
+```json
+{
+  "name": "Copy of Get User"
+}
+```
+The copied step is appended to the end of the same flow and keeps the original method, URL, headers, body, assertions, retry settings, and description.
+
+**Response:** `201 Created`
+
+---
+
 ### Delete a Step
 ```
 DELETE /flows/{flowId}/steps/{stepId}
