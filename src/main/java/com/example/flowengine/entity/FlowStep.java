@@ -53,6 +53,19 @@ public class FlowStep {
     @Column(columnDefinition = "INTEGER DEFAULT 0")
     private Integer initialDelayMs = 0;  // wait before first attempt, max enforced at 30000
 
+    // Polling config — separate from retry, for workflow/async APIs
+    @Column(columnDefinition = "BOOLEAN DEFAULT FALSE")
+    private Boolean pollUntilSuccess = false;   // enable polling mode
+
+    @Column(columnDefinition = "INTEGER DEFAULT 5000")
+    private Integer pollIntervalMs = 5000;      // wait between polls, max enforced at 30000
+
+    @Column(columnDefinition = "INTEGER DEFAULT 10")
+    private Integer pollMaxAttempts = 10;       // max polls before giving up, max enforced at 50
+
+    @Column(columnDefinition = "INTEGER DEFAULT 200")
+    private Integer pollExpectedStatus = 200;   // HTTP status that means "done"
+
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)
     @JsonBackReference

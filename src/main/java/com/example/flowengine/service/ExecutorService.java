@@ -1,6 +1,8 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.*;
+import com.example.flowengine.DTO.PollAttemptResult;
+import com.example.flowengine.DTO.PollAttemptResult;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
@@ -129,7 +131,9 @@ public class ExecutorService {
             stepExecution.setStepName(step.getName());
             stepExecution.setStepOrder(step.getStepOrder());
 
-            StepExecutionResult stepResult = executeStepWithRetry(step, previousResponses, stepExecution);
+            StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
+                    ? executeStepWithPolling(step, previousResponses, stepExecution)
+                    : executeStepWithRetry(step, previousResponses, stepExecution);
             stepResults.add(stepResult);
 
             if (stepResult.isSuccess()) {
@@ -251,6 +255,84 @@ public class ExecutorService {
         if (attempts.size() > 1) {
             lastResult.setRetryAttempts(attempts);
         }
+        return lastResult;
+    }
+
+    /**
+     * Polling mode — for async/workflow APIs that return non-2xx until the task is ready.
+     * Keeps hitting the API at pollIntervalMs intervals until:
+     *   - Response status matches pollExpectedStatus → PASS
+     *   - pollMaxAttempts exhausted → FAIL with "polling timed out"
+     * Unlike retry, 4xx responses are expected and do NOT stop polling.
+     */
+    private StepExecutionResult executeStepWithPolling(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
+        int maxAttempts = step.getPollMaxAttempts() != null ? step.getPollMaxAttempts() : 10;
+        int intervalMs = step.getPollIntervalMs() != null ? step.getPollIntervalMs() : 5000;
+        int expectedStatus = step.getPollExpectedStatus() != null ? step.getPollExpectedStatus() : 200;
+        int initialDelayMs = step.getInitialDelayMs() != null ? step.getInitialDelayMs() : 0;
+
+        List<PollAttemptResult> attempts = new ArrayList<>();
+        StepExecutionResult lastResult = null;
+
+        if (initialDelayMs > 0) {
+            log.info("Initial delay {}ms before polling step '{}'", initialDelayMs, step.getName());
+            try { Thread.sleep(initialDelayMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        }
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (attempt > 1) {
+                log.info("Polling step '{}' — attempt {}/{}, waiting {}ms", step.getName(), attempt, maxAttempts, intervalMs);
+                try { Thread.sleep(intervalMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            }
+
+            lastResult = executeStep(step, previousResponses, stepExecution);
+
+            PollAttemptResult pollAttempt = new PollAttemptResult();
+            pollAttempt.setAttempt(attempt);
+            pollAttempt.setStatusCode(lastResult.getStatusCode());
+            pollAttempt.setResponseBody(lastResult.getResponseBody());
+            pollAttempt.setDurationMs(lastResult.getDurationMs());
+
+            // Polling success: status matches expected
+            boolean conditionMet = lastResult.getStatusCode() != null
+                    && lastResult.getStatusCode() == expectedStatus;
+            pollAttempt.setSuccess(conditionMet);
+            attempts.add(pollAttempt);
+
+            if (conditionMet) {
+                log.info("Polling step '{}' completed successfully on attempt {}/{}", step.getName(), attempt, maxAttempts);
+                // Override success on the result — polling condition met
+                lastResult.setSuccess(true);
+                lastResult.setErrorMessage(null);
+                break;
+            }
+
+            log.info("Polling step '{}' attempt {}/{} — got {} (expecting {})",
+                    step.getName(), attempt, maxAttempts,
+                    lastResult.getStatusCode(), expectedStatus);
+        }
+
+        // If we exhausted all attempts without meeting condition
+        if (!attempts.isEmpty() && !attempts.get(attempts.size() - 1).isSuccess()) {
+            String msg = "Polling timed out after " + attempts.size() + " attempts — "
+                    + "last status: " + (lastResult.getStatusCode() != null ? lastResult.getStatusCode() : "no response")
+                    + " (expected " + expectedStatus + ")";
+            log.error("Step '{}': {}", step.getName(), msg);
+            lastResult.setSuccess(false);
+            lastResult.setErrorMessage(msg);
+            stepExecution.setSuccess(false);
+            stepExecution.setErrorMessage(msg);
+        }
+
+        // Persist poll metadata
+        stepExecution.setTotalPollAttempts(attempts.size());
+        try {
+            stepExecution.setPollAttemptsJson(objectMapper.writeValueAsString(attempts));
+        } catch (Exception ignored) {}
+        stepExecutionRepository.save(stepExecution);
+
+        lastResult.setPollAttempts(attempts);
+        lastResult.setTotalPollAttempts(attempts.size());
         return lastResult;
     }
 

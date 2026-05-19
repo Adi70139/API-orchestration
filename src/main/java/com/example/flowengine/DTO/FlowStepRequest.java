@@ -26,9 +26,15 @@ public class FlowStepRequest {
 
     private AssertionsRequest assertions;
 
-    private Integer retryCount;
-    private Integer retryDelayMs;
+    private Integer retryCount;      // null = use default (0)
+    private Integer retryDelayMs;    // null = use default (1000ms)
     private Integer initialDelayMs;  // null = use default (0ms) — wait before first attempt
+
+    // Polling config — for async/workflow APIs that return 4xx until ready
+    private Boolean pollUntilSuccess;   // null = use default (false)
+    private Integer pollIntervalMs;     // null = use default (5000ms)
+    private Integer pollMaxAttempts;    // null = use default (10)
+    private Integer pollExpectedStatus; // null = use default (200)
 
     @Data
     public static class AssertionsRequest {

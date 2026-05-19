@@ -57,4 +57,16 @@ public class StepExecution {
     // Total number of attempts made (1 = no retries)
     @Column(nullable = false)
     private Integer totalAttempts = 1;
+
+    // Stores all poll attempts as JSON array — null if polling not used
+    @Column(columnDefinition = "TEXT")
+    private String pollAttemptsJson;
+
+    // Total poll attempts made — null if polling not used
+    @Column
+    private Integer totalPollAttempts;
+
+    // True if polling exhausted max attempts without getting expected status
+    @Column(columnDefinition = "BOOLEAN DEFAULT FALSE")
+    private Boolean pollingTimedOut = false;
 }

@@ -19,6 +19,8 @@ public class FlowStepService {
     private static final int MAX_RETRY_COUNT = 5;
     private static final int MAX_RETRY_DELAY_MS = 10_000;
     private static final int MAX_INITIAL_DELAY_MS = 30_000;
+    private static final int MAX_POLL_INTERVAL_MS = 30_000;
+    private static final int MAX_POLL_ATTEMPTS = 50;
 
     private final FlowStepRepository flowStepRepository;
     private final FlowRepository flowRepository;
@@ -116,6 +118,17 @@ public class FlowStepService {
         step.setRetryCount(Math.min(Math.max(retryCount, 0), MAX_RETRY_COUNT));
         step.setRetryDelayMs(Math.min(Math.max(retryDelayMs, 0), MAX_RETRY_DELAY_MS));
         step.setInitialDelayMs(Math.min(Math.max(initialDelayMs, 0), MAX_INITIAL_DELAY_MS));
+
+        // Polling config
+        boolean pollUntilSuccess = Boolean.TRUE.equals(request.getPollUntilSuccess());
+        int pollIntervalMs = request.getPollIntervalMs() != null ? request.getPollIntervalMs() : 5000;
+        int pollMaxAttempts = request.getPollMaxAttempts() != null ? request.getPollMaxAttempts() : 10;
+        int pollExpectedStatus = request.getPollExpectedStatus() != null ? request.getPollExpectedStatus() : 200;
+
+        step.setPollUntilSuccess(pollUntilSuccess);
+        step.setPollIntervalMs(Math.min(Math.max(pollIntervalMs, 500), MAX_POLL_INTERVAL_MS));
+        step.setPollMaxAttempts(Math.min(Math.max(pollMaxAttempts, 1), MAX_POLL_ATTEMPTS));
+        step.setPollExpectedStatus(pollExpectedStatus);
     }
 
     private void mapAssertions(FlowStep step, FlowStepRequest request) {

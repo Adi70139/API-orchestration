@@ -2,6 +2,8 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.AssertionResult;
 import com.example.flowengine.DTO.RetryAttemptResult;
+import com.example.flowengine.DTO.PollAttemptResult;
+import com.example.flowengine.DTO.PollAttemptResult;
 import com.example.flowengine.DTO.BulkReportDTO;
 import com.example.flowengine.DTO.FlowReportDTO;
 import com.example.flowengine.DTO.ModuleReportDTO;
@@ -414,6 +416,131 @@ public class ReportService {
                 }
             }
 
+            // Poll attempts section
+            if (step.getPollAttemptsJson() != null) {
+                try {
+                    List<PollAttemptResult> pollAttempts = objectMapper.readValue(
+                            step.getPollAttemptsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(List.class, PollAttemptResult.class)
+                    );
+                    if (!pollAttempts.isEmpty()) {
+                        int totalPolls = step.getTotalPollAttempts() != null ? step.getTotalPollAttempts() : pollAttempts.size();
+                        boolean pollingSucceeded = pollAttempts.stream().anyMatch(PollAttemptResult::isSuccess);
+                        cardCell.add(new Paragraph("Polling (" + totalPolls + " attempts, " + (pollingSucceeded ? "succeeded" : "timed out") + ")")
+                                .setFont(bold).setFontSize(9).setFontColor(COLOR_HEADER_BG).setMarginTop(8));
+
+                        Table pollTable = new Table(UnitValue.createPointArray(new float[]{49, 98, 98, 246}));
+                        pollTable.setWidth(491);
+                        pollTable.setFixedLayout();
+                        pollTable.setMarginTop(4);
+
+                        for (String h : new String[]{"Poll #", "Status Code", "Duration", "Result"}) {
+                            pollTable.addCell(new Cell()
+                                    .add(new Paragraph(h).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+                        }
+
+                        boolean alt = false;
+                        for (PollAttemptResult pa : pollAttempts) {
+                            DeviceRgb rowBg = alt ? COLOR_ROW_ALT : null;
+                            DeviceRgb attemptColor = pa.isSuccess() ? COLOR_PASS : new DeviceRgb(234, 179, 8); // amber for pending
+
+                            Cell numCell = new Cell()
+                                    .add(new Paragraph(String.valueOf(pa.getAttempt())).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(attemptColor).setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f))
+                                    .setTextAlignment(TextAlignment.CENTER);
+                            Cell scCell = new Cell()
+                                    .add(new Paragraph(pa.getStatusCode() != null ? String.valueOf(pa.getStatusCode()) : "-").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell durCell = new Cell()
+                                    .add(new Paragraph(pa.getDurationMs() + " ms").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell resCell = new Cell()
+                                    .add(new Paragraph(pa.isSuccess() ? "CONDITION MET" : "WAITING").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+
+                            if (rowBg != null) { scCell.setBackgroundColor(rowBg); durCell.setBackgroundColor(rowBg); resCell.setBackgroundColor(rowBg); }
+
+                            pollTable.addCell(numCell);
+                            pollTable.addCell(scCell);
+                            pollTable.addCell(durCell);
+                            pollTable.addCell(resCell);
+                            alt = !alt;
+                        }
+                        cardCell.add(pollTable);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not deserialize poll attempts for step {}", step.getStepName());
+                }
+            }
+
+            // Poll attempts section
+            if (step.getPollAttemptsJson() != null) {
+                try {
+                    List<PollAttemptResult> pollAttempts = objectMapper.readValue(
+                            step.getPollAttemptsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(List.class, PollAttemptResult.class)
+                    );
+                    if (!pollAttempts.isEmpty()) {
+                        int totalPolls = step.getTotalPollAttempts() != null ? step.getTotalPollAttempts() : pollAttempts.size();
+                        boolean timedOut = Boolean.TRUE.equals(step.getPollingTimedOut());
+                        String pollHeader = "Polling Attempts (" + totalPolls + " poll" + (totalPolls == 1 ? "" : "s") + (timedOut ? " — TIMED OUT" : " — SUCCEEDED") + ")";
+                        cardCell.add(new Paragraph(pollHeader)
+                                .setFont(bold).setFontSize(9)
+                                .setFontColor(timedOut ? COLOR_FAIL : COLOR_PASS)
+                                .setMarginTop(8));
+
+                        Table pollTable = new Table(UnitValue.createPointArray(new float[]{49, 98, 98, 246}));
+                        pollTable.setWidth(491);
+                        pollTable.setFixedLayout();
+                        pollTable.setMarginTop(4);
+
+                        for (String h : new String[]{"Poll #", "Status Code", "Duration", "Result"}) {
+                            pollTable.addCell(new Cell()
+                                    .add(new Paragraph(h).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+                        }
+
+                        boolean alt = false;
+                        for (PollAttemptResult pa : pollAttempts) {
+                            DeviceRgb rowBg = alt ? COLOR_ROW_ALT : null;
+                            DeviceRgb attemptColor = pa.isSuccess() ? COLOR_PASS : new DeviceRgb(251, 191, 36); // yellow = still waiting
+                            String resultText = pa.isSuccess() ? "GOT EXPECTED STATUS"
+                                    : "Status " + (pa.getStatusCode() != null ? pa.getStatusCode() : "-") + " — waiting...";
+
+                            Cell numCell = new Cell()
+                                    .add(new Paragraph(String.valueOf(pa.getAttempt())).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(attemptColor).setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f))
+                                    .setTextAlignment(TextAlignment.CENTER);
+                            Cell scCell = new Cell()
+                                    .add(new Paragraph(pa.getStatusCode() != null ? String.valueOf(pa.getStatusCode()) : "-").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell durCell = new Cell()
+                                    .add(new Paragraph(pa.getDurationMs() + " ms").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell resCell = new Cell()
+                                    .add(new Paragraph(resultText).setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+
+                            if (rowBg != null) {
+                                scCell.setBackgroundColor(rowBg);
+                                durCell.setBackgroundColor(rowBg);
+                                resCell.setBackgroundColor(rowBg);
+                            }
+
+                            pollTable.addCell(numCell);
+                            pollTable.addCell(scCell);
+                            pollTable.addCell(durCell);
+                            pollTable.addCell(resCell);
+                            alt = !alt;
+                        }
+                        cardCell.add(pollTable);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not deserialize poll attempts for step {}", step.getStepName());
+                }
+            }
+
             card.addCell(cardCell);
             doc.add(card);
         }
@@ -745,6 +872,20 @@ public class ReportService {
         dto.setResolvedHeadersJson(step.getResolvedHeadersJson());
         dto.setResolvedBodyJson(step.getResolvedBodyJson());
         dto.setTotalAttempts(step.getTotalAttempts() != null ? step.getTotalAttempts() : 1);
+        dto.setTotalPollAttempts(step.getTotalPollAttempts());
+        dto.setPollingTimedOut(Boolean.TRUE.equals(step.getPollingTimedOut()));
+
+        if (step.getPollAttemptsJson() != null) {
+            try {
+                List<PollAttemptResult> pollAttempts = objectMapper.readValue(
+                        step.getPollAttemptsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, PollAttemptResult.class)
+                );
+                dto.setPollAttempts(pollAttempts);
+            } catch (Exception e) {
+                log.warn("Could not deserialize poll attempts for step {}: {}", step.getStepName(), e.getMessage());
+            }
+        }
 
         // Deserialize retry attempts if present
         if (step.getRetryAttemptsJson() != null) {

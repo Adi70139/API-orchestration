@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.example.flowengine.DTO.PollAttemptResult;
 
 @Data
 public class FlowReportDTO {
@@ -31,8 +32,11 @@ public class FlowReportDTO {
         private String resolvedUrl;
         private String resolvedHeadersJson;
         private String resolvedBodyJson;
-        private Integer totalAttempts;               // how many attempts were made
-        private List<RetryAttemptResult> retryAttempts;
+        private Integer totalAttempts;                  // how many retry attempts were made
+        private List<RetryAttemptResult> retryAttempts;  // null if only 1 attempt
+
+        private Integer totalPollAttempts;               // null if polling not used
+        private boolean pollingTimedOut;
+        private List<PollAttemptResult> pollAttempts;    // null if polling not used
     }
 }
-
