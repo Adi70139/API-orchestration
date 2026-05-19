@@ -57,3 +57,4 @@ groq:
 logging:
   level:
     com.example.flowengine.service.AssertionGeneratorService: DEBUG
+    com.itextpdf.layout.renderer.TableWidths: ERROR  # suppress cosmetic cell min-width warnings

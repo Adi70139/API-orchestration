@@ -15,19 +15,19 @@ import java.util.List;
 @RequiredArgsConstructor
 public class FlowStepService {
 
+    private static final int MAX_RETRY_COUNT = 5;
+    private static final int MAX_RETRY_DELAY_MS = 10_000;
+    private static final int MAX_INITIAL_DELAY_MS = 30_000;
+
     private final FlowStepRepository flowStepRepository;
     private final FlowRepository flowRepository;
     private final ObjectMapper objectMapper;
 
-    private static final int MAX_RETRY_COUNT = 5;
-    private static final int MAX_RETRY_DELAY_MS = 10_000;
-
     public FlowStep create(Long flowId, FlowStepRequest request) {
         FlowDefinition flow = flowRepository.findById(flowId)
-            .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
 
-        Integer maxOrder =
-                flowStepRepository.findMaxStepOrderByFlowId(flowId);
+        Integer maxOrder = flowStepRepository.findMaxStepOrderByFlowId(flowId);
 
         FlowStep step = new FlowStep();
         step.setFlow(flow);
@@ -38,9 +38,8 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
-
-        mapAssertions(step, request);
         mapRetryConfig(step, request);
+        mapAssertions(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -53,7 +52,7 @@ public class FlowStepService {
 
     public FlowStep getById(Long stepId) {
         return flowStepRepository.findById(stepId)
-            .orElseThrow(() -> new IllegalArgumentException("FlowStep not found with id: " + stepId));
+                .orElseThrow(() -> new IllegalArgumentException("FlowStep not found with id: " + stepId));
     }
 
     public FlowStep update(Long stepId, FlowStepRequest request) {
@@ -64,9 +63,8 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
-
-        mapAssertions(step, request);
         mapRetryConfig(step, request);
+        mapAssertions(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -77,7 +75,17 @@ public class FlowStepService {
         flowStepRepository.deleteById(stepId);
     }
 
-    // In create() and update(), after setting other fields:
+    private void mapRetryConfig(FlowStep step, FlowStepRequest request) {
+        int retryCount = request.getRetryCount() != null ? request.getRetryCount() : 0;
+        int retryDelayMs = request.getRetryDelayMs() != null ? request.getRetryDelayMs() : 1000;
+        int initialDelayMs = request.getInitialDelayMs() != null ? request.getInitialDelayMs() : 0;
+
+        // Enforce bounds — never trust user input on these
+        step.setRetryCount(Math.min(Math.max(retryCount, 0), MAX_RETRY_COUNT));
+        step.setRetryDelayMs(Math.min(Math.max(retryDelayMs, 0), MAX_RETRY_DELAY_MS));
+        step.setInitialDelayMs(Math.min(Math.max(initialDelayMs, 0), MAX_INITIAL_DELAY_MS));
+    }
+
     private void mapAssertions(FlowStep step, FlowStepRequest request) {
         if (request.getAssertions() != null) {
             try {
@@ -89,14 +97,4 @@ public class FlowStepService {
             step.setAssertionsJson(null);
         }
     }
-
-    private void mapRetryConfig(FlowStep step, FlowStepRequest request) {
-        int retryCount = request.getRetryCount() != null ? request.getRetryCount() : 0;
-        int retryDelayMs = request.getRetryDelayMs() != null ? request.getRetryDelayMs() : 1000;
-
-        // Enforce bounds — never trust user input on these
-        step.setRetryCount(Math.min(Math.max(retryCount, 0), MAX_RETRY_COUNT));
-        step.setRetryDelayMs(Math.min(Math.max(retryDelayMs, 0), MAX_RETRY_DELAY_MS));
-    }
-
 }

@@ -43,11 +43,15 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String assertionsJson;
 
-    @Column(nullable = false)
+    // Retry config — per step, user-configurable
+    @Column(columnDefinition = "INTEGER DEFAULT 0")
     private Integer retryCount = 0;      // 0 = no retries, max enforced at 5
 
-    @Column(nullable = false)
-    private Integer retryDelayMs = 1000;
+    @Column(columnDefinition = "INTEGER DEFAULT 1000")
+    private Integer retryDelayMs = 1000; // delay between retries in ms, max enforced at 10000
+
+    @Column(columnDefinition = "INTEGER DEFAULT 0")
+    private Integer initialDelayMs = 0;  // wait before first attempt, max enforced at 30000
 
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)

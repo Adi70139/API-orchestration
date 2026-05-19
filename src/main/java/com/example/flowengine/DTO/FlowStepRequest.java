@@ -2,7 +2,6 @@ package com.example.flowengine.DTO;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.util.Map;
@@ -21,19 +20,23 @@ public class FlowStepRequest {
     @NotBlank
     private String url;
 
-    private String headersJson; // optional, must be valid JSON object if provided
+    private String headersJson;
 
     private String bodyJson;
 
     private AssertionsRequest assertions;
 
-    private Integer retryCount;    // null = use default (0)
+    private Integer retryCount;
     private Integer retryDelayMs;
+    private Integer initialDelayMs;  // null = use default (0ms) — wait before first attempt
 
     @Data
     public static class AssertionsRequest {
-        private Integer statusCode;                          // optional exact status code check
-        private Map<String, Object> schema;                  // optional schema: fieldName -> type
-        private JsonNode body;       // optional field assertions
-    }     // optional, must be valid JSON if provided
+        private Integer statusCode;
+        private Map<String, Object> schema;
+
+        // JsonNode instead of Map<String, Map<String, Object>> —
+        // tolerates any valid JSON structure without type coercion failures
+        private JsonNode body;
+    }
 }

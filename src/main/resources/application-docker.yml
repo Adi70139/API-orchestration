@@ -53,3 +53,7 @@ groq:
   api:
     key: ${GROQ_API_KEY:}
   model: ${GROQ_MODEL:llama-3.1-8b-instant}
+
+logging:
+  level:
+    com.itextpdf.layout.renderer.TableWidths: ERROR

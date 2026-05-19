@@ -39,7 +39,7 @@ public class ExecutorService {
     private final EnvironmentService environmentService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public ModuleExecutionResult runModule(Long moduleId,Long environmentIdOverride) {
+    public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
 
@@ -99,7 +99,6 @@ public class ExecutorService {
             }
         }
 
-        // Seed env variables into previousResponses FIRST so placeholders resolve
         List<String> previousResponses = new ArrayList<>();
         if (!envVariables.isEmpty()) {
             try {
@@ -130,8 +129,6 @@ public class ExecutorService {
             stepExecution.setStepName(step.getName());
             stepExecution.setStepOrder(step.getStepOrder());
 
-             //️ Steps are intentionally sequential — previousResponses is not thread safe.
-            // Do NOT convert this to parallelStream without replacing ArrayList with CopyOnWriteArrayList
             StepExecutionResult stepResult = executeStepWithRetry(step, previousResponses, stepExecution);
             stepResults.add(stepResult);
 
@@ -140,7 +137,7 @@ public class ExecutorService {
             } else {
                 allPassed = false;
                 log.warn("Step '{}' failed in flow '{}': {}", step.getName(), flow.getName(), stepResult.getErrorMessage());
-                break; // fail fast
+                break;
             }
         }
 
@@ -164,11 +161,24 @@ public class ExecutorService {
      * Never retries 4xx (client error) or assertion failures (deterministic).
      */
     private StepExecutionResult executeStepWithRetry(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
-        int maxAttempts = 1 + Math.max(0, step.getRetryCount());
-        int delayMs = step.getRetryDelayMs();
+        // Null-safe — existing steps in DB may have null if created before retry columns were added
+        int retryCount = step.getRetryCount() != null ? step.getRetryCount() : 0;
+        int delayMs = step.getRetryDelayMs() != null ? step.getRetryDelayMs() : 1000;
+        int initialDelayMs = step.getInitialDelayMs() != null ? step.getInitialDelayMs() : 0;
+        int maxAttempts = 1 + Math.max(0, retryCount);
 
         List<RetryAttemptResult> attempts = new ArrayList<>();
         StepExecutionResult lastResult = null;
+
+        // Initial delay — wait before the very first attempt
+        if (initialDelayMs > 0) {
+            log.info("Initial delay {}ms before first attempt of step '{}'", initialDelayMs, step.getName());
+            try {
+                Thread.sleep(initialDelayMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             if (attempt > 1) {

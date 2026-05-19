@@ -110,7 +110,7 @@ public class ReportService {
     private void addHeader(Document doc, PdfFont bold, PdfFont regular, String title) throws IOException {
         // Title bar
         Table titleBar = new Table(UnitValue.createPercentArray(new float[]{1}))
-                .useAllAvailableWidth();
+                .useAllAvailableWidth().setFixedLayout();
         Cell titleCell = new Cell()
                 .add(new Paragraph(title).setFont(bold).setFontSize(20).setFontColor(ColorConstants.WHITE))
                 .add(new Paragraph("API Flow Engine").setFont(regular).setFontSize(10).setFontColor(ColorConstants.WHITE))
@@ -132,7 +132,7 @@ public class ReportService {
 
         addSectionTitle(doc, bold, "Module Summary");
 
-        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth();
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth().setFixedLayout();
         addSummaryRow(summary, regular, bold, "Module", me.getModule().getName(), false);
         addSummaryRow(summary, regular, bold, "Status", passed ? "PASSED" : "FAILED", true);
         addSummaryRow(summary, regular, bold, "Started At", me.getStartedAt() != null ? me.getStartedAt().format(FORMATTER) : "-", false);
@@ -144,7 +144,7 @@ public class ReportService {
         // Flow overview table
         if (me.getFlowExecutions() != null && !me.getFlowExecutions().isEmpty()) {
             addSectionTitle(doc, bold, "Flow Overview");
-            Table overview = new Table(UnitValue.createPercentArray(new float[]{3, 2, 2, 2})).useAllAvailableWidth();
+            Table overview = new Table(UnitValue.createPercentArray(new float[]{3, 2, 2, 2})).useAllAvailableWidth().setFixedLayout();
             addTableHeader(overview, bold, "Flow Name", "Status", "Started At", "Duration");
             boolean alt = false;
             for (FlowExecution fe : me.getFlowExecutions()) {
@@ -181,7 +181,7 @@ public class ReportService {
 
         addSectionTitle(doc, bold, "Flow Summary");
 
-        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth();
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth().setFixedLayout();
         addSummaryRow(summary, regular, bold, "Flow Name", flow.getName(), false);
         addSummaryRow(summary, regular, bold, "Description", flow.getDescription() != null ? flow.getDescription() : "-", true);
         addSummaryRow(summary, regular, bold, "Status", passed ? "PASSED" : "FAILED", false);
@@ -202,7 +202,7 @@ public class ReportService {
 
         addSectionTitle(doc, bold, "Flow: " + fe.getFlow().getName());
 
-        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth();
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth().setFixedLayout();
         addSummaryRow(summary, regular, bold, "Status", passed ? "PASSED" : "FAILED", false);
         addSummaryRow(summary, regular, bold, "Started At", fe.getStartedAt() != null ? fe.getStartedAt().format(FORMATTER) : "-", true);
         addSummaryRow(summary, regular, bold, "Finished At", fe.getFinishedAt() != null ? fe.getFinishedAt().format(FORMATTER) : "-", false);
@@ -225,12 +225,17 @@ public class ReportService {
             boolean success = step.isSuccess();
             DeviceRgb statusColor = success ? COLOR_PASS : COLOR_FAIL;
 
-            // Step card
-            Table card = new Table(UnitValue.createPercentArray(new float[]{1})).useAllAvailableWidth();
+            // Step card — use fixed point width to avoid iText nested table overflow warnings
+            // A4=595pt, margins=40pt each side => 515pt usable
+            Table card = new Table(UnitValue.createPointArray(new float[]{515}));
+            card.setWidth(515);
+            card.setFixedLayout();
             card.setMarginBottom(12);
 
-            // Step header row
-            Table headerRow = new Table(UnitValue.createPercentArray(new float[]{6, 2})).useAllAvailableWidth();
+            // Step header row — 491pt = 515 minus 12pt padding on each side
+            Table headerRow = new Table(UnitValue.createPointArray(new float[]{391, 100}));
+            headerRow.setWidth(491);
+            headerRow.setFixedLayout();
             Cell nameCell = new Cell()
                     .add(new Paragraph("Step " + step.getStepOrder() + ": " + step.getStepName())
                             .setFont(bold).setFontSize(11).setFontColor(COLOR_HEADER_BG))
@@ -253,8 +258,11 @@ public class ReportService {
                     .setBackgroundColor(COLOR_SECTION_BG)
                     .setPadding(12);
 
-            // Details table
-            Table details = new Table(UnitValue.createPercentArray(new float[]{2, 5})).useAllAvailableWidth();
+            // Details table — setWidth avoids iText overflow warning caused by nested table
+            // padding of 12pt on each side means inner table should not use full available width
+            Table details = new Table(UnitValue.createPointArray(new float[]{140, 351}));
+            details.setWidth(491);
+            details.setFixedLayout();
             details.setMarginTop(8);
             addDetailRow(details, bold, regular, "URL", step.getResolvedUrl(), false);
             addDetailRow(details, bold, regular, "Status Code",
@@ -293,8 +301,9 @@ public class ReportService {
                         cardCell.add(new Paragraph("Assertions")
                                 .setFont(bold).setFontSize(9).setFontColor(COLOR_HEADER_BG).setMarginTop(8));
 
-                        Table assertionTable = new Table(UnitValue.createPercentArray(new float[]{3, 1, 4}))
-                                .useAllAvailableWidth();
+                        Table assertionTable = new Table(UnitValue.createPointArray(new float[]{184, 61, 246}));
+                        assertionTable.setWidth(491);
+                        assertionTable.setFixedLayout();
 
                         assertionTable.addCell(new Cell()
                                 .add(new Paragraph("Path").setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
@@ -338,6 +347,70 @@ public class ReportService {
                     }
                 } catch (Exception e) {
                     log.warn("Could not deserialize assertion results for step {}", step.getStepName());
+                }
+            }
+
+            // Retry attempts section — only shown when step actually retried
+            if (step.getRetryAttemptsJson() != null) {
+                try {
+                    List<RetryAttemptResult> retryAttempts = objectMapper.readValue(
+                            step.getRetryAttemptsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(List.class, RetryAttemptResult.class)
+                    );
+                    if (!retryAttempts.isEmpty()) {
+                        int totalAttempts = step.getTotalAttempts() != null ? step.getTotalAttempts() : retryAttempts.size();
+                        int retries = totalAttempts - 1;
+                        cardCell.add(new Paragraph("Retry Attempts (" + totalAttempts + " total, " + retries + " retr" + (retries == 1 ? "y" : "ies") + ")")
+                                .setFont(bold).setFontSize(9).setFontColor(COLOR_HEADER_BG).setMarginTop(8));
+
+                        Table retryTable = new Table(UnitValue.createPointArray(new float[]{49, 98, 98, 246}));
+                        retryTable.setWidth(491);
+                        retryTable.setFixedLayout();
+                        retryTable.setMarginTop(4);
+
+                        for (String h : new String[]{"Attempt", "Status Code", "Duration", "Error / Result"}) {
+                            retryTable.addCell(new Cell()
+                                    .add(new Paragraph(h).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(COLOR_HEADER_BG).setPadding(4).setBorder(Border.NO_BORDER));
+                        }
+
+                        boolean alt = false;
+                        for (RetryAttemptResult ra : retryAttempts) {
+                            DeviceRgb rowBg = alt ? COLOR_ROW_ALT : null;
+                            DeviceRgb attemptColor = ra.isSuccess() ? COLOR_PASS : COLOR_FAIL;
+                            String resultText = ra.isSuccess() ? "PASSED"
+                                    : (ra.getErrorMessage() != null ? ra.getErrorMessage() : "FAILED");
+
+                            Cell attemptCell = new Cell()
+                                    .add(new Paragraph(String.valueOf(ra.getAttempt())).setFont(bold).setFontSize(8).setFontColor(ColorConstants.WHITE))
+                                    .setBackgroundColor(attemptColor).setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f))
+                                    .setTextAlignment(TextAlignment.CENTER);
+                            Cell scCell = new Cell()
+                                    .add(new Paragraph(ra.getStatusCode() != null ? String.valueOf(ra.getStatusCode()) : "-").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell durCell = new Cell()
+                                    .add(new Paragraph(ra.getDurationMs() + " ms").setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                            Cell errCell = new Cell()
+                                    .add(new Paragraph(resultText).setFont(regular).setFontSize(8))
+                                    .setPadding(4).setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+
+                            if (rowBg != null) {
+                                scCell.setBackgroundColor(rowBg);
+                                durCell.setBackgroundColor(rowBg);
+                                errCell.setBackgroundColor(rowBg);
+                            }
+
+                            retryTable.addCell(attemptCell);
+                            retryTable.addCell(scCell);
+                            retryTable.addCell(durCell);
+                            retryTable.addCell(errCell);
+                            alt = !alt;
+                        }
+                        cardCell.add(retryTable);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not deserialize retry attempts for step {}", step.getStepName());
                 }
             }
 
@@ -405,15 +478,38 @@ public class ReportService {
                 .setPadding(5)
                 .setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
         Cell valueCell = new Cell()
-                .add(new Paragraph(value != null ? value : "-").setFont(valueFont).setFontSize(9))
+                .add(new Paragraph(breakLongTokens(value != null ? value : "-")).setFont(valueFont).setFontSize(9))
                 .setPadding(5)
-                .setBorder(new SolidBorder(COLOR_BORDER, 0.5f));
+                .setBorder(new SolidBorder(COLOR_BORDER, 0.5f))
+                .setWordSpacing(0);
         if (bg != null) {
             labelCell.setBackgroundColor(bg);
             valueCell.setBackgroundColor(bg);
         }
         table.addCell(labelCell);
         table.addCell(valueCell);
+    }
+
+    /**
+     * Inserts zero-width spaces into long unbreakable tokens (JWT, URLs, base64)
+     * so iText can wrap them within the cell without overflowing.
+     * Targets tokens longer than 60 chars with no natural break points.
+     */
+    private String breakLongTokens(String text) {
+        if (text == null) return "-";
+        // Insert soft break opportunity every 60 chars in any word longer than 60 chars
+        StringBuilder result = new StringBuilder();
+        for (String word : text.split("(?<=\s)|(?=\s)")) {
+            if (word.length() > 60 && !word.isBlank()) {
+                for (int i = 0; i < word.length(); i += 60) {
+                    result.append(word, i, Math.min(i + 60, word.length()));
+                    if (i + 60 < word.length()) result.append("​"); // zero-width space
+                }
+            } else {
+                result.append(word);
+            }
+        }
+        return result.toString();
     }
 
     public byte[] generateBulkReport(Long bulkJobId) throws IOException {
@@ -445,7 +541,7 @@ public class ReportService {
         long runningCount = items.stream().filter(i -> i.getStatus() == ExecutionStatus.IN_PROGRESS).count();
 
         addSectionTitle(doc, bold, "Bulk Job Summary");
-        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth();
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1, 1})).useAllAvailableWidth().setFixedLayout();
         addSummaryRow(summary, regular, bold, "Bulk Job ID", String.valueOf(bulkJob.getId()), false);
         addSummaryRow(summary, regular, bold, "Type", bulkJob.getType(), true);
         addSummaryRow(summary, regular, bold, "Status", bulkJob.getStatus().name(), false);
@@ -458,7 +554,7 @@ public class ReportService {
 
         // ── Items overview table ──────────────────────────────────────────────────
         addSectionTitle(doc, bold, "Items Overview");
-        Table overview = new Table(UnitValue.createPercentArray(new float[]{3, 2, 2, 2})).useAllAvailableWidth();
+        Table overview = new Table(UnitValue.createPercentArray(new float[]{3, 2, 2, 2})).useAllAvailableWidth().setFixedLayout();
         addTableHeader(overview, bold, "Name", "Status", "Duration", "Execution ID");
         boolean alt = false;
         for (BulkJobItem item : items) {
