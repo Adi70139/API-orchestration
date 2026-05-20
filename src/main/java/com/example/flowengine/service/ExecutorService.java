@@ -379,13 +379,35 @@ public class ExecutorService {
                     try {
                         FlowStepRequest.AssertionsRequest assertions = objectMapper.readValue(
                                 step.getAssertionsJson(), FlowStepRequest.AssertionsRequest.class);
-                        assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody, previousResponses);
 
-                        boolean assertionsPassed = assertionResults.stream().allMatch(AssertionResult::isPassed);
-                        if (!assertionsPassed) {
+                        // Seed the current step's resolved request body into context so
+                        // assertions can reference {processId} etc. from the request they just sent
+                        List<String> assertionContext = new ArrayList<>(previousResponses);
+                        if (resolvedBody != null && !resolvedBody.isBlank()) {
+                            assertionContext.add(resolvedBody);
+                        }
+
+                        assertionResults = assertionEngine.evaluate(assertions, statusCode, responseBody, assertionContext);
+
+                        // Split critical vs non-critical failures
+                        // Non-critical: record as FAIL but don't stop the flow
+                        // Critical: stop the flow (default behaviour)
+                        List<AssertionResult> criticalFailures = assertionResults.stream()
+                                .filter(a -> !a.isPassed() && a.isCritical())
+                                .collect(Collectors.toList());
+
+                        List<AssertionResult> nonCriticalFailures = assertionResults.stream()
+                                .filter(a -> !a.isPassed() && !a.isCritical())
+                                .collect(Collectors.toList());
+
+                        if (!nonCriticalFailures.isEmpty()) {
+                            log.warn("Step '{}' has {} non-critical assertion failure(s) — continuing flow",
+                                    step.getName(), nonCriticalFailures.size());
+                        }
+
+                        if (!criticalFailures.isEmpty()) {
                             success = false;
-                            String failedAssertions = assertionResults.stream()
-                                    .filter(a -> !a.isPassed())
+                            String failedAssertions = criticalFailures.stream()
                                     .map(a -> a.getPath() + ": " + a.getMessage())
                                     .collect(Collectors.joining("; "));
                             stepExecution.setErrorMessage("Assertion failures: " + failedAssertions);

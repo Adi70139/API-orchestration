@@ -39,10 +39,14 @@ public class FlowStepRequest {
     @Data
     public static class AssertionsRequest {
         private Integer statusCode;
+        private Boolean statusCodeCritical; // null = true (default critical)
         private Map<String, Object> schema;
+        private Boolean schemaCritical;     // null = true
 
         // JsonNode instead of Map<String, Map<String, Object>> —
         // tolerates any valid JSON structure without type coercion failures
+        // Each field can include a "critical": false key to make it non-critical
+        // e.g. "processId": { "equals": "{processId}", "critical": false }
         private JsonNode body;
     }
 }
