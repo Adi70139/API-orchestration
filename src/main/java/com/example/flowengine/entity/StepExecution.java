@@ -1,7 +1,10 @@
 package com.example.flowengine.entity;
 
+import com.example.flowengine.constants.ExecutionStatus;
 import jakarta.persistence.*;
 import lombok.Data;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "step_executions")
@@ -24,6 +27,14 @@ public class StepExecution {
 
     @Column(nullable = false)
     private Integer stepOrder;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ExecutionStatus status = ExecutionStatus.PENDING;
+
+    private LocalDateTime startedAt;
+
+    private LocalDateTime finishedAt;
 
     @Column(columnDefinition = "TEXT")
     private String resolvedUrl;

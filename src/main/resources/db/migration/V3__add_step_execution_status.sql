@@ -1,0 +1,12 @@
+ALTER TABLE step_executions
+    ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    ADD COLUMN IF NOT EXISTS started_at TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP;
+
+UPDATE step_executions
+SET status = CASE
+    WHEN success = TRUE THEN 'PASS'
+    ELSE 'FAIL'
+END
+WHERE status = 'PENDING'
+  AND duration_ms IS NOT NULL;

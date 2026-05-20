@@ -1,13 +1,13 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.*;
-import com.example.flowengine.DTO.PollAttemptResult;
-import com.example.flowengine.DTO.PollAttemptResult;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
 import com.example.flowengine.utils.PlaceholderUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -20,6 +20,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -39,6 +42,26 @@ public class ExecutorService {
     private final StepExecutionRepository stepExecutionRepository;
     private final AssertionEngine assertionEngine;
     private final EnvironmentService environmentService;
+
+    private java.util.concurrent.ExecutorService asyncFlowExecutor;
+
+    @PostConstruct
+    public void init() {
+        asyncFlowExecutor = Executors.newFixedThreadPool(5);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        asyncFlowExecutor.shutdown();
+        try {
+            if (!asyncFlowExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                asyncFlowExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            asyncFlowExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride) {
@@ -84,7 +107,59 @@ public class ExecutorService {
         return executeFlow(flow, null, environmentIdOverride);
     }
 
+    public FlowExecutionStartResponse startFlowAsync(Long flowId, Long environmentIdOverride) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+        List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
+        FlowExecution flowExecution = createFlowExecution(flow, null, steps);
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                executeExistingFlow(flow.getId(), flowExecution.getId(), environmentIdOverride);
+            } catch (Exception e) {
+                log.error("Async flow execution {} failed: {}", flowExecution.getId(), e.getMessage(), e);
+                markFlowFailed(flowExecution.getId(), e.getMessage());
+            }
+        }, asyncFlowExecutor);
+
+        FlowExecutionStartResponse response = new FlowExecutionStartResponse();
+        response.setFlowExecutionId(flowExecution.getId());
+        response.setFlowId(flow.getId());
+        response.setFlowName(flow.getName());
+        response.setStatus(flowExecution.getStatus());
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public FlowExecutionStatusDTO getFlowExecutionStatus(Long flowExecutionId) {
+        FlowExecution flowExecution = flowExecutionRepository.findById(flowExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow execution not found: " + flowExecutionId));
+
+        FlowExecutionStatusDTO dto = new FlowExecutionStatusDTO();
+        dto.setFlowExecutionId(flowExecution.getId());
+        dto.setFlowId(flowExecution.getFlow().getId());
+        dto.setFlowName(flowExecution.getFlow().getName());
+        dto.setStatus(flowExecution.getStatus());
+        dto.setStartedAt(flowExecution.getStartedAt());
+        dto.setFinishedAt(flowExecution.getFinishedAt());
+        dto.setSteps(stepExecutionRepository.findByFlowExecutionIdOrderByStepOrderAsc(flowExecutionId)
+                .stream()
+                .map(this::mapToStepStatusDTO)
+                .collect(Collectors.toList()));
+        return dto;
+    }
+
     private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution, Long environmentIdOverride) {
+        List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
+        FlowExecution flowExecution = createFlowExecution(flow, moduleExecution, steps);
+        return executeExistingFlow(flow.getId(), flowExecution.getId(), environmentIdOverride);
+    }
+
+    private FlowExecutionResult executeExistingFlow(Long flowId, Long flowExecutionId, Long environmentIdOverride) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+        FlowExecution flowExecution = flowExecutionRepository.findById(flowExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow execution not found: " + flowExecutionId));
 
         Map<String, String> envVariables = new LinkedHashMap<>();
         Long envId = environmentIdOverride != null
@@ -112,28 +187,26 @@ public class ExecutorService {
         }
 
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
-
-        FlowExecution flowExecution = new FlowExecution();
-        flowExecution.setFlow(flow);
-        flowExecution.setModuleExecution(moduleExecution);
-        flowExecution.setStartedAt(LocalDateTime.now());
-        flowExecution.setStatus(ExecutionStatus.IN_PROGRESS);
-        flowExecution = flowExecutionRepository.save(flowExecution);
+        Map<Long, StepExecution> stepExecutions = stepExecutionRepository
+                .findByFlowExecutionIdOrderByStepOrderAsc(flowExecution.getId())
+                .stream()
+                .collect(Collectors.toMap(StepExecution::getStepId, stepExecution -> stepExecution));
 
         List<StepExecutionResult> stepResults = new ArrayList<>();
         long flowStart = System.currentTimeMillis();
         boolean allPassed = true;
 
         for (FlowStep step : steps) {
-            StepExecution stepExecution = new StepExecution();
-            stepExecution.setFlowExecution(flowExecution);
-            stepExecution.setStepId(step.getId());
-            stepExecution.setStepName(step.getName());
-            stepExecution.setStepOrder(step.getStepOrder());
+            StepExecution stepExecution = stepExecutions.get(step.getId());
+            if (stepExecution == null) {
+                stepExecution = createStepExecution(flowExecution, step);
+            }
+            markStepInProgress(stepExecution);
 
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
                     ? executeStepWithPolling(step, previousResponses, stepExecution)
                     : executeStepWithRetry(step, previousResponses, stepExecution);
+            markStepCompleted(stepExecution, stepResult);
             stepResults.add(stepResult);
 
             if (stepResult.isSuccess()) {
@@ -157,6 +230,79 @@ public class ExecutorService {
         result.setStepResults(stepResults);
         result.setTotalDurationMs(System.currentTimeMillis() - flowStart);
         return result;
+    }
+
+    private FlowExecution createFlowExecution(FlowDefinition flow, ModuleExecution moduleExecution, List<FlowStep> steps) {
+        FlowExecution flowExecution = new FlowExecution();
+        flowExecution.setFlow(flow);
+        flowExecution.setModuleExecution(moduleExecution);
+        flowExecution.setStartedAt(LocalDateTime.now());
+        flowExecution.setStatus(ExecutionStatus.IN_PROGRESS);
+        flowExecution = flowExecutionRepository.save(flowExecution);
+
+        for (FlowStep step : steps) {
+            createStepExecution(flowExecution, step);
+        }
+
+        return flowExecution;
+    }
+
+    private StepExecution createStepExecution(FlowExecution flowExecution, FlowStep step) {
+        StepExecution stepExecution = new StepExecution();
+        stepExecution.setFlowExecution(flowExecution);
+        stepExecution.setStepId(step.getId());
+        stepExecution.setStepName(step.getName());
+        stepExecution.setStepOrder(step.getStepOrder());
+        stepExecution.setStatus(ExecutionStatus.PENDING);
+        return stepExecutionRepository.save(stepExecution);
+    }
+
+    private void markStepInProgress(StepExecution stepExecution) {
+        stepExecution.setStatus(ExecutionStatus.IN_PROGRESS);
+        stepExecution.setStartedAt(LocalDateTime.now());
+        stepExecutionRepository.save(stepExecution);
+    }
+
+    private void markStepCompleted(StepExecution stepExecution, StepExecutionResult stepResult) {
+        stepExecution.setStatus(stepResult.isSuccess() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
+        stepExecution.setFinishedAt(LocalDateTime.now());
+        stepExecutionRepository.save(stepExecution);
+    }
+
+    private void markFlowFailed(Long flowExecutionId, String message) {
+        flowExecutionRepository.findById(flowExecutionId).ifPresent(flowExecution -> {
+            flowExecution.setStatus(ExecutionStatus.FAIL);
+            flowExecution.setFinishedAt(LocalDateTime.now());
+            flowExecutionRepository.save(flowExecution);
+        });
+
+        stepExecutionRepository.findByFlowExecutionIdOrderByStepOrderAsc(flowExecutionId).stream()
+                .filter(stepExecution -> stepExecution.getStatus() == ExecutionStatus.IN_PROGRESS)
+                .forEach(stepExecution -> {
+                    stepExecution.setStatus(ExecutionStatus.FAIL);
+                    stepExecution.setSuccess(false);
+                    stepExecution.setErrorMessage(message);
+                    stepExecution.setFinishedAt(LocalDateTime.now());
+                    stepExecutionRepository.save(stepExecution);
+                });
+    }
+
+    private FlowExecutionStatusDTO.StepStatusDTO mapToStepStatusDTO(StepExecution stepExecution) {
+        FlowExecutionStatusDTO.StepStatusDTO dto = new FlowExecutionStatusDTO.StepStatusDTO();
+        dto.setStepExecutionId(stepExecution.getId());
+        dto.setStepId(stepExecution.getStepId());
+        dto.setStepName(stepExecution.getStepName());
+        dto.setStepOrder(stepExecution.getStepOrder());
+        dto.setStatus(stepExecution.getStatus());
+        dto.setStatusCode(stepExecution.getStatusCode());
+        dto.setErrorMessage(stepExecution.getErrorMessage());
+        dto.setDurationMs(stepExecution.getDurationMs());
+        dto.setTotalAttempts(stepExecution.getTotalAttempts());
+        dto.setTotalPollAttempts(stepExecution.getTotalPollAttempts());
+        dto.setPollingTimedOut(stepExecution.getPollingTimedOut());
+        dto.setStartedAt(stepExecution.getStartedAt());
+        dto.setFinishedAt(stepExecution.getFinishedAt());
+        return dto;
     }
 
     /**
@@ -304,6 +450,9 @@ public class ExecutorService {
                 // Override success on the result — polling condition met
                 lastResult.setSuccess(true);
                 lastResult.setErrorMessage(null);
+                stepExecution.setSuccess(true);
+                stepExecution.setErrorMessage(null);
+                stepExecution.setPollingTimedOut(false);
                 break;
             }
 
@@ -322,6 +471,7 @@ public class ExecutorService {
             lastResult.setErrorMessage(msg);
             stepExecution.setSuccess(false);
             stepExecution.setErrorMessage(msg);
+            stepExecution.setPollingTimedOut(true);
         }
 
         // Persist poll metadata

@@ -375,6 +375,72 @@ POST /execute/flows/{flowId}
 
 ---
 
+### Run a Flow Asynchronously
+Starts a flow in the background and returns a `flowExecutionId` immediately. Use this when the frontend needs live per-step progress.
+
+```
+POST /execute/flows/{flowId}/async
+```
+
+**Request Body:** optional
+```json
+{
+  "environmentId": 1
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "flowExecutionId": 3,
+  "flowId": 1,
+  "flowName": "Top Up Flow",
+  "status": "IN_PROGRESS"
+}
+```
+
+Poll live status:
+```
+GET /execute/flows/runs/{flowExecutionId}/status
+```
+
+**Response:** `200 OK`
+```json
+{
+  "flowExecutionId": 3,
+  "flowId": 1,
+  "flowName": "Top Up Flow",
+  "status": "IN_PROGRESS",
+  "steps": [
+    {
+      "stepId": 1,
+      "stepName": "Create Job",
+      "stepOrder": 1,
+      "status": "PASS",
+      "statusCode": 202
+    },
+    {
+      "stepId": 2,
+      "stepName": "Poll Job",
+      "stepOrder": 2,
+      "status": "IN_PROGRESS",
+      "statusCode": 404,
+      "totalPollAttempts": 2
+    },
+    {
+      "stepId": 3,
+      "stepName": "Fetch Result",
+      "stepOrder": 3,
+      "status": "PENDING"
+    }
+  ]
+}
+```
+
+Step statuses are `PENDING`, `IN_PROGRESS`, `PASS`, and `FAIL`. Polling steps stay `IN_PROGRESS` while their intermediate attempts return non-matching statuses, and only become `FAIL` when polling times out.
+
+---
+
 ### Run a Module
 Executes all flows in the module sequentially. Each flow runs all its steps in order.
 
