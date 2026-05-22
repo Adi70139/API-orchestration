@@ -167,11 +167,11 @@ DELETE /flows/{flowId}
 Steps belong to a flow and are executed in `stepOrder` sequence.
 
 ### Placeholder Support
-Any field (`url`, `headersJson`, `bodyJson`) can contain `{placeholderName}` syntax.
+Any field (`url`, `headersJson`, `bodyJson`) can contain `{placeholderName}` or `{{placeholderName}}` syntax.
 Placeholders are resolved at runtime from **previous steps' response bodies**.
 
-- Top-level field: `{id}` → resolves `id` from a previous response
-- Nested field: `{user.id}` → resolves `user.id` using dot notation
+- Top-level field: `{id}` or `{{id}}` → resolves `id` from a previous response
+- Nested field: `{user.id}` or `{{user.id}}` → resolves `user.id` using dot notation
 - If a placeholder cannot be resolved → step fails with a descriptive error
 
 The `requiredParams` field is **auto-extracted** on save — you never set it manually.
@@ -559,7 +559,7 @@ Validation errors return field-level detail:
 
 ## Placeholder Chaining — How It Works
 
-When a step has `{placeholderName}` in its `url`, `headersJson`, or `bodyJson`:
+When a step has `{placeholderName}` or `{{placeholderName}}` in its `url`, `headersJson`, or `bodyJson`:
 
 1. The engine collects all **previous steps' response bodies** in order
 2. Each response body is parsed as JSON and flattened into dot-notation keys
@@ -574,9 +574,9 @@ Step 1 response:
 ```
 
 Step 2 can use:
-- `{id}` → `"1"`
-- `{username}` → `"Bret"`
-- `{address.city}` → `"Gwenborough"`
+- `{id}` or `{{id}}` → `"1"`
+- `{username}` or `{{username}}` → `"Bret"`
+- `{address.city}` or `{{address.city}}` → `"Gwenborough"`
 
 Step 2 body:
 ```json

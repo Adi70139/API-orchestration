@@ -9,7 +9,8 @@ import java.util.regex.Pattern;
 
 public class PlaceholderUtils {
 
-    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{([a-zA-Z0-9_.]+)}");
+    // Pattern supports both {variableName} and {{variableName}} formats
+    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{?([a-zA-Z0-9_.]+)\\}\\}?");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private PlaceholderUtils() {}
@@ -31,6 +32,7 @@ public class PlaceholderUtils {
      * previousResponses: list of raw JSON response bodies from prior steps, in order.
      * Later responses take priority over earlier ones (last write wins).
      * Fails fast if any placeholder cannot be resolved.
+     * Supports both {variableName} and {{variableName}} formats.
      */
     public static String resolve(String template, List<String> previousResponses) {
         if (template == null || template.isBlank()) return template;
@@ -61,6 +63,7 @@ public class PlaceholderUtils {
      * Used for assertion values — if a placeholder can't be resolved, returns
      * the original template so the assertion fails with a meaningful mismatch
      * rather than blowing up the whole execution.
+     * Supports both {variableName} and {{variableName}} formats.
      */
     public static String resolveValue(String template, List<String> previousResponses) {
         if (template == null || !template.contains("{")) return template;

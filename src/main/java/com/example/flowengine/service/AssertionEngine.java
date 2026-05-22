@@ -22,7 +22,7 @@ public class AssertionEngine {
     /**
      * Evaluate all assertions against the HTTP response.
      * previousResponses: accumulated response bodies from prior steps (same as ExecutorService uses).
-     * Assertion values support {placeholder} syntax — resolved before comparison.
+     * Assertion values support {placeholder} or {{placeholder}} syntax — resolved before comparison.
      * Returns list of AssertionResult — one per assertion checked.
      */
     public List<AssertionResult> evaluate(AssertionsRequest assertions,

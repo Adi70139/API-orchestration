@@ -93,7 +93,6 @@ public class EnvironmentService {
             moduleRepository.saveAll(referencingModules);
         }
 
-        // now safe to delete the environment
         environmentRepository.delete(env);
     }
 
