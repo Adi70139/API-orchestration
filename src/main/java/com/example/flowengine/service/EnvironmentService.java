@@ -8,6 +8,10 @@ import com.example.flowengine.repository.EnvironmentRepository;
 import com.example.flowengine.repository.ModuleRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.flowengine.entity.FlowDefinition;
+import com.example.flowengine.entity.ModuleEntity;
+import com.example.flowengine.repository.FlowRepository;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +28,7 @@ public class EnvironmentService {
     private final ModuleRepository moduleRepository;
     private final EncryptionService encryptionService;
     private final ObjectMapper objectMapper;
+    private final FlowRepository flowRepository;
 
     public EnvironmentResponse create(Long moduleId, EnvironmentRequest request) {
         ModuleEntity module = moduleRepository.findById(moduleId)
@@ -67,11 +72,29 @@ public class EnvironmentService {
                 .stream().map(this::toResponse).collect(Collectors.toList());
     }
 
+    @Transactional
     public void delete(Long envId) {
-        if (!environmentRepository.existsById(envId)) {
-            throw new IllegalArgumentException("Environment not found: " + envId);
+        // ensure env exists (throws if not)
+        Environment env = getEntityById(envId);
+
+        // find flows that reference this environment as their default
+        List<FlowDefinition> referencingFlows = flowRepository.findByDefaultEnvironment_Id(envId);
+
+        if (!referencingFlows.isEmpty()) {
+            // unset the relationship and persist
+            referencingFlows.forEach(f -> f.setDefaultEnvironment(null));
+            flowRepository.saveAll(referencingFlows);
         }
-        environmentRepository.deleteById(envId);
+
+        // find modules that reference this environment as their default
+        List<ModuleEntity> referencingModules = moduleRepository.findByDefaultEnvironment_Id(envId);
+        if (!referencingModules.isEmpty()) {
+            referencingModules.forEach(m -> m.setDefaultEnvironment(null));
+            moduleRepository.saveAll(referencingModules);
+        }
+
+        // now safe to delete the environment
+        environmentRepository.delete(env);
     }
 
     /**

@@ -14,4 +14,7 @@ public interface FlowRepository extends JpaRepository<FlowDefinition, Long> {
     List<FlowDefinition> findByModule_Name(String moduleName);
 
     Optional<FlowDefinition> findByNameAndModule_Id(String name, Long moduleId);
+
+    // find flows which have this environment set as their defaultEnvironment
+    List<FlowDefinition> findByDefaultEnvironment_Id(Long envId);
 }
