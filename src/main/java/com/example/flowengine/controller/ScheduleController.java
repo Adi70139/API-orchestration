@@ -51,9 +51,14 @@ public class ScheduleController {
 
     @GetMapping("/{moduleId}")
     @Operation(summary = "Get a schedule", description = "Get the schedule for a specific module.")
-    public ModuleSchedule getSchedule(@PathVariable Long moduleId) {
-        return moduleScheduleRepository.findByModuleId(moduleId)
+    public ModuleScheduleResponse getSchedule(@PathVariable Long moduleId) {
+        ModuleSchedule schedule = moduleScheduleRepository.findByModuleId(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("No schedule found for module: " + moduleId));
+        ModuleScheduleResponse response = new ModuleScheduleResponse();
+        response.setTime(schedule.getTime());
+        response.setTimezone(schedule.getTimezone());
+        response.setActive(schedule.isActive());
+        return response;
     }
 
     @DeleteMapping("/{moduleId}")
