@@ -2,6 +2,7 @@ package com.example.flowengine.controller;
 
 import com.example.flowengine.DTO.DuplicateFlowStepRequest;
 import com.example.flowengine.DTO.FlowStepRequest;
+import com.example.flowengine.DTO.FlowStepReorderRequest;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.service.FlowStepService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -49,6 +50,13 @@ public class FlowStepController {
                            @PathVariable Long stepId,
                            @Valid @RequestBody FlowStepRequest request) {
         return flowStepService.update(stepId, request);
+    }
+
+    @PutMapping("/reorder")
+    @Operation(summary = "Reorder steps", description = "Update stepOrder values for steps in a flow")
+    public List<FlowStep> reorder(@PathVariable Long flowId,
+                                  @Valid @RequestBody FlowStepReorderRequest request) {
+        return flowStepService.reorder(flowId, request);
     }
 
     @PostMapping("/{stepId}/duplicate")

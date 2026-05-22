@@ -2,6 +2,7 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.DuplicateFlowStepRequest;
 import com.example.flowengine.DTO.FlowStepRequest;
+import com.example.flowengine.DTO.FlowStepReorderRequest;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.repository.FlowRepository;
@@ -9,8 +10,14 @@ import com.example.flowengine.repository.FlowStepRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -69,6 +76,47 @@ public class FlowStepService {
         mapRetryConfig(step, request);
         mapAssertions(step, request);
         return flowStepRepository.save(step);
+    }
+
+    @Transactional
+    public List<FlowStep> reorder(Long flowId, FlowStepReorderRequest request) {
+        if (!flowRepository.existsById(flowId)) {
+            throw new IllegalArgumentException("Flow not found with id: " + flowId);
+        }
+
+        List<FlowStep> existingSteps = flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
+        Map<Long, FlowStep> stepsById = existingSteps.stream()
+                .collect(Collectors.toMap(FlowStep::getId, Function.identity()));
+        Set<Long> requestedStepIds = new HashSet<>();
+        Set<Integer> requestedOrders = new HashSet<>();
+
+        for (FlowStepReorderRequest.StepOrderUpdate update : request.getSteps()) {
+            if (!requestedStepIds.add(update.getStepId())) {
+                throw new IllegalArgumentException("Duplicate step id in reorder request: " + update.getStepId());
+            }
+            if (!requestedOrders.add(update.getStepOrder())) {
+                throw new IllegalArgumentException("Duplicate step order in reorder request: " + update.getStepOrder());
+            }
+            FlowStep step = stepsById.get(update.getStepId());
+            if (step == null) {
+                throw new IllegalArgumentException("FlowStep with id " + update.getStepId() + " does not belong to flow: " + flowId);
+            }
+            step.setStepOrder(update.getStepOrder());
+        }
+
+        if (requestedStepIds.size() != existingSteps.size() || !requestedStepIds.containsAll(stepsById.keySet())) {
+            throw new IllegalArgumentException("Reorder request must include every step in the flow exactly once");
+        }
+
+        Set<Integer> finalOrders = new HashSet<>();
+        for (FlowStep step : existingSteps) {
+            if (!finalOrders.add(step.getStepOrder())) {
+                throw new IllegalArgumentException("Duplicate step order after reorder: " + step.getStepOrder());
+            }
+        }
+
+        flowStepRepository.saveAll(existingSteps);
+        return flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
     }
 
     public FlowStep duplicate(Long flowId, Long stepId, DuplicateFlowStepRequest request) {

@@ -270,6 +270,24 @@ PUT /flows/{flowId}/steps/{stepId}
 
 ---
 
+### Reorder Steps
+```
+PUT /flows/{flowId}/steps/reorder
+```
+**Request Body:** provide every step in the flow exactly once with its final `stepOrder`.
+```json
+{
+  "steps": [
+    { "stepId": 3, "stepOrder": 1 },
+    { "stepId": 1, "stepOrder": 2 },
+    { "stepId": 2, "stepOrder": 3 }
+  ]
+}
+```
+**Response:** `200 OK` — returns all steps ordered by their updated `stepOrder`.
+
+---
+
 ### Duplicate a Step
 ```
 POST /flows/{flowId}/steps/{stepId}/duplicate
@@ -291,6 +309,38 @@ The copied step is appended to the end of the same flow and keeps the original m
 DELETE /flows/{flowId}/steps/{stepId}
 ```
 **Response:** `204 No Content`
+
+---
+
+## Import
+
+### Import Postman Collection
+```
+POST /import/postman
+Content-Type: multipart/form-data
+```
+**Form Data:**
+- `file`: Postman collection JSON
+- `moduleId`: target module ID
+- `flowName`: flow name to create
+
+**Response:** `201 Created` — creates a flow with one step per imported request.
+
+---
+
+### Import Swagger/OpenAPI Spec
+```
+POST /import/swagger
+Content-Type: multipart/form-data
+```
+**Form Data:**
+- `file`: Swagger/OpenAPI JSON or YAML
+- `moduleId`: target module ID
+- `flowName`: flow name to create
+
+The importer creates one step per API operation from `paths`. It uses available `summary`, `operationId`, URL, query parameters, header parameters, content type, examples, and request body schemas to populate each step. Users can then reorder or delete imported steps.
+
+**Response:** `201 Created`
 
 ---
 

@@ -15,7 +15,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/import")
 @RequiredArgsConstructor
-@Tag(name = "Import", description = "Import Postman collections as flows")
+@Tag(name = "Import", description = "Import Postman collections and Swagger/OpenAPI specs as flows")
 public class CollectionImportController {
 
     private final CollectionImportService collectionImportService;
@@ -37,5 +37,23 @@ public class CollectionImportController {
         request.setFlowName(flowName);
 
         return collectionImportService.importCollection(file, request);
+    }
+
+    @PostMapping(value = "/swagger", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(
+            summary = "Import Swagger/OpenAPI Spec",
+            description = "Upload a Swagger/OpenAPI JSON or YAML file to create a flow with one step per API operation."
+    )
+    public FlowDetailedDTO importSwagger(
+            @RequestPart("file") MultipartFile file,
+            @RequestPart("moduleId") String moduleId,
+            @RequestPart("flowName") String flowName) throws Exception {
+
+        CollectionImportRequest request = new CollectionImportRequest();
+        request.setModuleId(Long.parseLong(moduleId));
+        request.setFlowName(flowName);
+
+        return collectionImportService.importSwagger(file, request);
     }
 }
