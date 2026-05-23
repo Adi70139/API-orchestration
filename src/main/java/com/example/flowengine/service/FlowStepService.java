@@ -50,6 +50,7 @@ public class FlowStepService {
         step.setBodyJson(request.getBodyJson());
         mapRetryConfig(step, request);
         mapAssertions(step, request);
+        mapSkipCondition(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -75,6 +76,7 @@ public class FlowStepService {
         step.setBodyJson(request.getBodyJson());
         mapRetryConfig(step, request);
         mapAssertions(step, request);
+        mapSkipCondition(step, request);
         return flowStepRepository.save(step);
     }
 
@@ -146,6 +148,7 @@ public class FlowStepService {
         duplicate.setRetryCount(original.getRetryCount());
         duplicate.setRetryDelayMs(original.getRetryDelayMs());
         duplicate.setInitialDelayMs(original.getInitialDelayMs());
+        duplicate.setSkipConditionJson(original.getSkipConditionJson());
 
         return flowStepRepository.save(duplicate);
     }
@@ -188,6 +191,18 @@ public class FlowStepService {
             }
         } else {
             step.setAssertionsJson(null);
+        }
+    }
+
+    private void mapSkipCondition(FlowStep step, FlowStepRequest request) {
+        if (request.getSkipCondition() != null) {
+            try {
+                step.setSkipConditionJson(objectMapper.writeValueAsString(request.getSkipCondition()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Invalid skipCondition format: " + e.getMessage());
+            }
+        } else {
+            step.setSkipConditionJson(null);
         }
     }
 }

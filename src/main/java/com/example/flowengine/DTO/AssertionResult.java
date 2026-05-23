@@ -16,7 +16,7 @@ public class AssertionResult {
         this.path = path;
         this.passed = passed;
         this.message = message;
-        this.critical = true;
+        this.critical = false;
     }
 
     // Constructor with explicit critical flag

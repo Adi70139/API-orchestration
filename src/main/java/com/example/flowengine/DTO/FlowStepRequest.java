@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -35,6 +36,23 @@ public class FlowStepRequest {
     private Integer pollIntervalMs;     // null = use default (5000ms)
     private Integer pollMaxAttempts;    // null = use default (10)
     private Integer pollExpectedStatus; // null = use default (200)
+
+    // Skip condition — if true against accumulated responses, this step is bypassed
+    private SkipConditionRequest skipCondition;
+
+    @Data
+    public static class SkipConditionRequest {
+        // "AND" = all conditions must match to skip; "OR" = any condition match skips the step
+        private String logic = "AND"; // default AND
+        private List<SkipConditionRule> conditions;
+
+        @Data
+        public static class SkipConditionRule {
+            private String path;      // dot-notation key e.g. "order.status" or "status"
+            private String operator;  // equals | notEquals | contains | greaterThan | lessThan | exists | in
+            private Object value;     // expected value — supports {placeholder} syntax
+        }
+    }
 
     @Data
     public static class AssertionsRequest {

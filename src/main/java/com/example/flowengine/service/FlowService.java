@@ -4,6 +4,7 @@ import com.example.flowengine.DTO.DuplicateFlowRequest;
 import com.example.flowengine.DTO.FlowDTO;
 import com.example.flowengine.DTO.FlowDetailedDTO;
 import com.example.flowengine.DTO.FlowRequest;
+import com.example.flowengine.DTO.FlowStepRequest;
 import com.example.flowengine.entity.Environment;
 import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.FlowStep;
@@ -240,6 +241,19 @@ public class FlowService {
                                         FlowDetailedDTO.AssertionsDTO.class
                                 );
                                 stepDTO.setAssertions(assertions);
+                            } catch (Exception e) {
+                                // malformed json — skip silently
+                            }
+                        }
+
+                        // Deserialize skipConditionJson
+                        if (step.getSkipConditionJson() != null) {
+                            try {
+                                FlowStepRequest.SkipConditionRequest skipCondition = objectMapper.readValue(
+                                        step.getSkipConditionJson(),
+                                        FlowStepRequest.SkipConditionRequest.class
+                                );
+                                stepDTO.setSkipCondition(skipCondition);
                             } catch (Exception e) {
                                 // malformed json — skip silently
                             }

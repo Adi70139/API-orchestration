@@ -1,14 +1,18 @@
 package com.example.flowengine.DTO;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
 public class GenerateAssertionsRequest {
 
-    @NotBlank
-    private String responseBody; // actual JSON response from the step
+    // The step whose lastResponseBody will be used as context for assertion generation
+    @NotNull(message = "stepId is required")
+    private Long stepId;
 
-    @NotBlank
-    private String description;  // plain English e.g. "id should be a number and status should be SUCCESS"
+    // Plain English description of what to assert
+    // e.g. "id should be a number and status should be SUCCESS"
+    @NotBlank(message = "description is required")
+    private String description;
 }

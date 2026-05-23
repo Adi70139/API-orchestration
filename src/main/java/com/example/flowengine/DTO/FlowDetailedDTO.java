@@ -24,7 +24,8 @@ public class FlowDetailedDTO {
         private String url;
         private String headersJson;
         private String bodyJson;
-        private AssertionsDTO assertions; // structured, not raw string
+        private AssertionsDTO assertions;
+        private FlowStepRequest.SkipConditionRequest skipCondition; // null if no skip condition
     }
 
     @Data

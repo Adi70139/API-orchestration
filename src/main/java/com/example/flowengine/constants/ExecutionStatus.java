@@ -5,5 +5,6 @@ public enum ExecutionStatus {
     PENDING,
     PASS,
     FAIL,
-    IN_PROGRESS
+    IN_PROGRESS,
+    SKIPPED
 }

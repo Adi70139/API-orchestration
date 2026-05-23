@@ -66,6 +66,17 @@ public class FlowStep {
     @Column(columnDefinition = "INTEGER DEFAULT 200")
     private Integer pollExpectedStatus = 200;   // HTTP status that means "done"
 
+    // Skip condition — evaluated against accumulated responses before this step runs.
+    // JSON: { "logic": "AND"|"OR", "conditions": [ { "path": "status", "operator": "equals", "value": "inactive" } ] }
+    @Column(columnDefinition = "TEXT")
+    private String skipConditionJson;
+
+    // Last successful response body from this step's most recent execution.
+    // Updated by ExecutorService after every successful step run.
+    // Used by LLM generators for assertions and skip conditions — frontend never needs to send response bodies.
+    @Column(columnDefinition = "TEXT")
+    private String lastResponseBody;
+
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)
     @JsonBackReference

@@ -18,6 +18,8 @@ public class StepExecutionResult {
     private Integer statusCode;   // Integer (not int) — can be null on network failure
     private String responseBody;
     private boolean success;
+    private boolean skipped;       // true if step was bypassed by skip condition
+    private String skipReason;     // human-readable explanation of which condition matched
     private String errorMessage;
     private long durationMs;
     private List<AssertionResult> assertionResults;

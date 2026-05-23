@@ -1,6 +1,7 @@
 package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.*;
+import com.example.flowengine.DTO.FlowStepRequest;
 import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
@@ -42,6 +43,7 @@ public class ExecutorService {
     private final StepExecutionRepository stepExecutionRepository;
     private final AssertionEngine assertionEngine;
     private final EnvironmentService environmentService;
+    private final SkipConditionEvaluator skipConditionEvaluator;
 
     private java.util.concurrent.ExecutorService asyncFlowExecutor;
 
@@ -201,6 +203,32 @@ public class ExecutorService {
             if (stepExecution == null) {
                 stepExecution = createStepExecution(flowExecution, step);
             }
+
+            // Evaluate skip condition before executing the step
+            if (step.getSkipConditionJson() != null) {
+                try {
+                    FlowStepRequest.SkipConditionRequest skipCondition = objectMapper.readValue(
+                            step.getSkipConditionJson(), FlowStepRequest.SkipConditionRequest.class);
+                    String skipReason = skipConditionEvaluator.shouldSkip(skipCondition, previousResponses);
+                    if (skipReason != null) {
+                        log.info("Skipping step '{}' (order {}) — {}", step.getName(), step.getStepOrder(), skipReason);
+                        markStepSkipped(stepExecution, skipReason);
+
+                        StepExecutionResult skippedResult = new StepExecutionResult();
+                        skippedResult.setStepId(step.getId());
+                        skippedResult.setStepName(step.getName());
+                        skippedResult.setStepOrder(step.getStepOrder());
+                        skippedResult.setSkipped(true);
+                        skippedResult.setSkipReason(skipReason);
+                        skippedResult.setSuccess(true); // skipped = not a failure
+                        stepResults.add(skippedResult);
+                        continue; // bypass execution, don't add to previousResponses
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not evaluate skipCondition for step '{}': {}", step.getName(), e.getMessage());
+                }
+            }
+
             markStepInProgress(stepExecution);
 
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
@@ -211,6 +239,9 @@ public class ExecutorService {
 
             if (stepResult.isSuccess()) {
                 previousResponses.add(stepResult.getResponseBody());
+                // Persist latest response body on the step entity for LLM generators
+                step.setLastResponseBody(stepResult.getResponseBody());
+                flowStepRepository.save(step);
             } else {
                 allPassed = false;
                 log.warn("Step '{}' failed in flow '{}': {}", step.getName(), flow.getName(), stepResult.getErrorMessage());
@@ -266,6 +297,16 @@ public class ExecutorService {
     private void markStepCompleted(StepExecution stepExecution, StepExecutionResult stepResult) {
         stepExecution.setStatus(stepResult.isSuccess() ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
         stepExecution.setFinishedAt(LocalDateTime.now());
+        stepExecutionRepository.save(stepExecution);
+    }
+
+    private void markStepSkipped(StepExecution stepExecution, String reason) {
+        stepExecution.setStatus(ExecutionStatus.SKIPPED);
+        stepExecution.setStartedAt(LocalDateTime.now());
+        stepExecution.setFinishedAt(LocalDateTime.now());
+        stepExecution.setSuccess(false); // skipped steps don't count as success in DB
+        stepExecution.setErrorMessage("SKIPPED: " + reason);
+        stepExecution.setDurationMs(0L);
         stepExecutionRepository.save(stepExecution);
     }
 

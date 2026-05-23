@@ -2,6 +2,8 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.DTO.GenerateAssertionsRequest;
 import com.example.flowengine.DTO.GenerateAssertionsResponse;
+import com.example.flowengine.entity.FlowStep;
+import com.example.flowengine.repository.FlowStepRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,7 @@ public class AssertionGeneratorService {
 
     private final OkHttpClient okHttpClient;
     private final ObjectMapper objectMapper;
+    private final FlowStepRepository flowStepRepository;
 
     @Value("${llm.provider:ollama}") // "ollama" or "groq"
     private String llmProvider;
@@ -40,8 +43,18 @@ public class AssertionGeneratorService {
 
     public GenerateAssertionsResponse generateAssertions(GenerateAssertionsRequest request) {
         try {
-            log.info("Generating assertions using provider: {}", llmProvider);
-            String prompt = buildPrompt(request.getResponseBody(), request.getDescription());
+            log.info("Generating assertions for stepId={}", request.getStepId());
+
+            FlowStep step = flowStepRepository.findById(request.getStepId())
+                    .orElseThrow(() -> new IllegalArgumentException("Step not found: " + request.getStepId()));
+
+            if (step.getLastResponseBody() == null || step.getLastResponseBody().isBlank()) {
+                throw new IllegalArgumentException(
+                        "Step '" + step.getName() + "' has no recorded response yet. " +
+                                "Execute the flow at least once so a response is available.");
+            }
+
+            String prompt = buildPrompt(step.getLastResponseBody(), request.getDescription());
             log.debug("Built prompt length: {} chars", prompt.length());
 
             String llmResponse = "groq".equals(llmProvider)
@@ -55,6 +68,8 @@ public class AssertionGeneratorService {
                     result.getSchema() != null ? result.getSchema().size() : 0,
                     result.getBody() != null ? result.getBody().size() : 0);
             return result;
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to generate assertions: {}", e.getMessage());
             throw new RuntimeException("Failed to generate assertions: " + e.getMessage());
