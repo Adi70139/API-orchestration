@@ -277,6 +277,7 @@ public class SkipConditionGeneratorService {
                 .replaceAll("\\bTrue\\b", "true")
                 .replaceAll("\\bFalse\\b", "false")
                 .replaceAll("'", "\"")
+                .replaceAll(",\\s*([}\\]])", "$1") // remove trailing commas before } or ]
                 .trim();
 
         int start = clean.indexOf('{');

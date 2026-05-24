@@ -2,9 +2,10 @@ package com.example.flowengine.service;
 
 import com.example.flowengine.entity.ModuleSchedule;
 import com.example.flowengine.repository.ModuleScheduleRepository;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
@@ -25,11 +26,22 @@ public class SchedulerService {
 
     private final ConcurrentHashMap<Long, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
 
-    @PostConstruct
+    // ApplicationReadyEvent fires after the entire context is fully started —
+    // all @PostConstruct methods done, all beans initialized.
+    // @PostConstruct was unreliable here because ExecutorService.init() (which sets up
+    // asyncFlowExecutor) is also a @PostConstruct — order between them is not guaranteed.
+    @EventListener(ApplicationReadyEvent.class)
     public void loadSchedulesOnStartup() {
         List<ModuleSchedule> schedules = moduleScheduleRepository.findAllByActiveTrue();
-        log.info("Loading {} module schedules on startup", schedules.size());
-        schedules.forEach(this::registerSchedule);
+        log.info("Loading {} active module schedule(s) on startup", schedules.size());
+        schedules.forEach(schedule -> {
+            try {
+                registerSchedule(schedule);
+            } catch (Exception e) {
+                log.error("Failed to register schedule for module {}: {}",
+                        schedule.getModule().getId(), e.getMessage());
+            }
+        });
     }
 
     public void registerSchedule(ModuleSchedule schedule) {
@@ -37,8 +49,8 @@ public class SchedulerService {
         String cron = timeToCron(schedule.getTime());
         TimeZone tz = TimeZone.getTimeZone(schedule.getTimezone());
 
-        // Atomically replace: compute new future only if we can cancel the old one first.
-        // ConcurrentHashMap.compute() is atomic per key — no two threads can race on the same moduleId.
+        log.info("Registering schedule for module {} — cron='{}' tz='{}'", moduleId, cron, tz.getID());
+
         scheduledTasks.compute(moduleId, (id, existing) -> {
             if (existing != null) {
                 existing.cancel(false);
@@ -48,7 +60,7 @@ public class SchedulerService {
                     () -> runScheduledModule(moduleId),
                     new CronTrigger(cron, tz)
             );
-            log.info("Scheduled module {} at {} {}", moduleId, schedule.getTime(), schedule.getTimezone());
+            log.info("Scheduled module {} at '{}' ({})", moduleId, schedule.getTime(), schedule.getTimezone());
             return future;
         });
     }
@@ -57,7 +69,7 @@ public class SchedulerService {
         scheduledTasks.computeIfPresent(moduleId, (id, existing) -> {
             existing.cancel(false);
             log.info("Cancelled schedule for module {}", moduleId);
-            return null; // returning null removes the key
+            return null;
         });
     }
 
@@ -67,12 +79,16 @@ public class SchedulerService {
             executorService.runModule(moduleId, null);
             log.info("Scheduled execution completed for module {}", moduleId);
         } catch (Exception e) {
-            log.error("Scheduled execution failed for module {}: {}", moduleId, e.getMessage());
+            log.error("Scheduled execution failed for module {}: {}", moduleId, e.getMessage(), e);
         }
     }
 
+    // Converts "HH:mm" to a 6-part Spring cron expression: "0 mm HH * * *"
     private String timeToCron(String time) {
         String[] parts = time.split(":");
-        return "0 " + parts[1] + " " + parts[0] + " * * *";
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid time format '" + time + "' — expected HH:mm");
+        }
+        return "0 " + parts[1].trim() + " " + parts[0].trim() + " * * *";
     }
 }

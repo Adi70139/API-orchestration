@@ -244,6 +244,7 @@ public class AssertionGeneratorService {
         clean = clean.replaceAll("\\bTrue\\b", "true");
         clean = clean.replaceAll("\\bFalse\\b", "false");
         clean = clean.replaceAll("'", "\"");
+        clean = clean.replaceAll(",\\s*([}\\]])", "$1"); // remove trailing commas before } or ]
 
         int start = clean.indexOf('{');
         int end = clean.lastIndexOf('}');
