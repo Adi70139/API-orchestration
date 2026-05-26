@@ -224,8 +224,11 @@ public class ReportService {
         addSectionTitle(doc, bold, "Step Details");
 
         for (StepExecution step : steps) {
+            boolean skipped = step.getStatus() == ExecutionStatus.SKIPPED;
             boolean success = step.isSuccess();
-            DeviceRgb statusColor = success ? COLOR_PASS : COLOR_FAIL;
+            DeviceRgb statusColor = skipped ? new DeviceRgb(100, 116, 139) // slate for skipped
+                    : success ? COLOR_PASS : COLOR_FAIL;
+            String statusLabel = skipped ? "SKIPPED" : success ? "PASSED" : "FAILED";
 
             // Step card — use fixed point width to avoid iText nested table overflow warnings
             // A4=595pt, margins=40pt each side => 515pt usable
@@ -244,7 +247,7 @@ public class ReportService {
                     .setBorder(Border.NO_BORDER)
                     .setPaddingBottom(4);
             Cell statusCell = new Cell()
-                    .add(new Paragraph(success ? "PASSED" : "FAILED")
+                    .add(new Paragraph(statusLabel)
                             .setFont(bold).setFontSize(10).setFontColor(ColorConstants.WHITE)
                             .setTextAlignment(TextAlignment.CENTER))
                     .setBackgroundColor(statusColor)
@@ -271,6 +274,18 @@ public class ReportService {
                     step.getStatusCode() != null ? String.valueOf(step.getStatusCode()) : "-", true);
             addDetailRow(details, bold, regular, "Duration",
                     step.getDurationMs() != null ? step.getDurationMs() + " ms" : "-", false);
+
+            if (skipped) {
+                // Extract skip reason from errorMessage ("SKIPPED: <reason>")
+                String skipReason = step.getErrorMessage() != null && step.getErrorMessage().startsWith("SKIPPED: ")
+                        ? step.getErrorMessage().substring("SKIPPED: ".length())
+                        : (step.getErrorMessage() != null ? step.getErrorMessage() : "-");
+                addDetailRow(details, bold, regular, "Skip Reason", skipReason, true);
+                cardCell.add(details);
+                card.addCell(cardCell);
+                doc.add(card);
+                continue; // no HTTP body / assertions / retries / polls for skipped steps
+            }
 
             if (step.getResolvedHeadersJson() != null) {
                 addDetailRow(details, bold, mono, "Headers Sent", step.getResolvedHeadersJson(), true);

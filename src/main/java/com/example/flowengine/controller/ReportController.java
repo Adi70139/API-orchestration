@@ -85,10 +85,30 @@ public class ReportController {
     }
 
     /**
-     * Get JSON data for bulk execution report (for UI display).
-     * GET /report/bulk/{bulkJobId}/data
+     * Download PDF report for a scheduled module execution run.
+     * GET /report/schedule/runs/{moduleExecutionId}
+     * Identical data to module-executions/{id} but surfaced under /report/schedule
+     * so the UI schedule history page can link to it directly.
      */
-    @GetMapping("/bulk/{bulkJobId}/data")
+    @GetMapping("/schedule/runs/{moduleExecutionId}")
+    @Operation(summary = "Download schedule run report", description = "Generate a PDF report for a scheduled module execution run. Includes all flows, steps, skip reasons, assertions, retries and poll attempts.")
+    public ResponseEntity<byte[]> scheduleRunReport(@PathVariable Long moduleExecutionId) throws IOException {
+        byte[] pdf = reportService.generateModuleReport(moduleExecutionId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"schedule-run-" + moduleExecutionId + "-report.pdf\"")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
+    }
+
+    /**
+     * Get JSON data for a scheduled run (for UI display without download).
+     * GET /report/schedule/runs/{moduleExecutionId}/data
+     */
+    @GetMapping("/schedule/runs/{moduleExecutionId}/data")
+    @Operation(summary = "Get schedule run report data", description = "Get JSON report data for a scheduled module execution run.")
+    public ModuleReportDTO getScheduleRunReportData(@PathVariable Long moduleExecutionId) {
+        return reportService.getModuleReportData(moduleExecutionId);
+    }
     @Operation(summary = "Get bulk job report data", description = "Get JSON data for a bulk execution job for UI display.")
     public BulkReportDTO getBulkReportData(@PathVariable Long bulkJobId) {
         return reportService.getBulkReportData(bulkJobId);
