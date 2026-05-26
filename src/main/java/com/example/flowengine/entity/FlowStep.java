@@ -40,8 +40,15 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String bodyJson;
 
+    // Assertions evaluated at execution time — saved explicitly by user
     @Column(columnDefinition = "TEXT")
     private String assertionsJson;
+
+    // Cumulative assertions built up via the assertion generator (schema + field-level).
+    // Never overwritten wholesale — always merged. Saved back after each generate call.
+    // User explicitly applies this to assertionsJson when satisfied.
+    @Column(columnDefinition = "TEXT")
+    private String lastAssertionsJson;
 
     // Retry config — per step, user-configurable
     @Column(columnDefinition = "INTEGER DEFAULT 0")
