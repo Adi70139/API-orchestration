@@ -10,9 +10,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -185,29 +182,23 @@ public class MethodExecutorService {
     // ─── Groovy execution ─────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private Map<String, String> runGroovy(String script, Map<String, String> params) {
+    public Map<String, String> runGroovy(String script, Map<String, String> params) {
         if (script == null || script.isBlank()) {
             throw new IllegalArgumentException("Groovy script is empty");
         }
 
-        ScriptEngineManager manager = new ScriptEngineManager();
-        ScriptEngine engine = manager.getEngineByName("groovy");
-
-        if (engine == null) {
-            throw new IllegalStateException("Groovy scripting engine not available — check groovy-jsr223 on classpath");
-        }
-
-        // Inject params into script scope
-        engine.put("params", params);
-
         try {
-            Object scriptResult = engine.eval(script);
+            groovy.lang.Binding binding = new groovy.lang.Binding();
+            // Pass params as a plain LinkedHashMap — guaranteed clean key access in Groovy
+            binding.setVariable("params", new java.util.LinkedHashMap<>(params));
+
+            groovy.lang.GroovyShell shell = new groovy.lang.GroovyShell(binding);
+            Object scriptResult = shell.evaluate(script);
 
             if (scriptResult == null) {
                 throw new IllegalStateException("Groovy script returned null — must return a Map or a single value");
             }
 
-            // If script returns a Map — use keys directly
             if (scriptResult instanceof Map) {
                 Map<String, String> output = new LinkedHashMap<>();
                 ((Map<?, ?>) scriptResult).forEach((k, v) ->

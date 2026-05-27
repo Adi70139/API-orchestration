@@ -8,15 +8,14 @@ import com.example.flowengine.repository.CustomMethodRepository;
 import com.example.flowengine.repository.FlowStepRepository;
 import com.example.flowengine.repository.StepMethodRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import groovy.lang.GroovyShell;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
-import org.codehaus.groovy.control.CompilationFailedException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -189,10 +188,15 @@ public class CustomMethodService {
                 .orElseThrow(() -> new IllegalArgumentException("Step not found: " + stepId));
         CustomMethod method = findById(request.getMethodId());
 
+        // Auto-assign execution order — append after last existing method on this step
+        List<StepMethod> existing = stepMethodRepository.findByStepIdOrderByExecutionOrder(stepId);
+        int nextOrder = existing.isEmpty() ? 1
+                : existing.stream().mapToInt(StepMethod::getExecutionOrder).max().getAsInt() + 1;
+
         StepMethod sm = new StepMethod();
         sm.setStep(flowStepRepository.getReferenceById(stepId));
         sm.setMethod(method);
-        sm.setExecutionOrder(request.getExecutionOrder() != null ? request.getExecutionOrder() : 1);
+        sm.setExecutionOrder(nextOrder);
 
         if (request.getParameterBindings() != null) {
             try {
@@ -203,7 +207,7 @@ public class CustomMethodService {
         }
 
         stepMethodRepository.save(sm);
-        log.info("Attached method '{}' to step {} at order {}", method.getName(), stepId, sm.getExecutionOrder());
+        log.info("Attached method '{}' to step {} at order {}", method.getName(), stepId, nextOrder);
     }
 
     @Transactional
@@ -215,10 +219,14 @@ public class CustomMethodService {
         return stepMethodRepository.findByStepIdOrderByExecutionOrder(stepId);
     }
 
-    // ─── Script generation + compile-check ───────────────────────────────────
+    // ─── Script generation + compile + runtime check ─────────────────────────
 
     private String generateAndValidateScript(String name, String description,
                                              List<GenerateMethodRequest.ParameterDefinition> parameters, String previousError) {
+
+        // Build sample params for runtime test — use obvious dummy values per type
+        Map<String, String> sampleParams = buildSampleParams(parameters);
+
         for (int attempt = 1; attempt <= MAX_SCRIPT_RETRIES; attempt++) {
             String prompt = buildPrompt(name, description, parameters, previousError);
             String llmResponse;
@@ -231,35 +239,79 @@ public class CustomMethodService {
             String script = extractScript(llmResponse);
             log.info("Attempt {}/{} — generated script ({} chars)", attempt, MAX_SCRIPT_RETRIES, script.length());
 
+            // Step 1: compile check
             String compilationError = compileCheck(script);
-            if (compilationError == null) {
-                log.info("Script compiled successfully on attempt {}", attempt);
-                return script;
+            if (compilationError != null) {
+                log.warn("Compilation failed on attempt {}: {}", attempt, compilationError);
+                previousError = "COMPILATION ERROR: " + compilationError;
+                continue;
             }
 
-            log.warn("Script compilation failed on attempt {}: {}", attempt, compilationError);
-            previousError = compilationError; // feed back into next prompt
+            // Step 2: runtime test with sample params
+            String runtimeError = runtimeCheck(script, sampleParams);
+            if (runtimeError != null) {
+                log.warn("Runtime test failed on attempt {}: {}", attempt, runtimeError);
+                previousError = "RUNTIME ERROR with sample params " + sampleParams + ": " + runtimeError;
+                continue;
+            }
+
+            log.info("Script passed compile + runtime check on attempt {}", attempt);
+            return script;
         }
 
         throw new RuntimeException(
                 "LLM could not generate a valid Groovy script after " + MAX_SCRIPT_RETRIES +
-                        " attempts. Try rephrasing the description or editing the script manually after generation.");
+                        " attempts. Try rephrasing the description or edit the script manually after generation.");
     }
 
     /**
-     * Compile-checks a Groovy script without executing it.
-     * @return null if valid, error message if invalid
+     * Compile-checks without executing.
+     * @return null if valid, error string if invalid
      */
     private String compileCheck(String script) {
         try {
-            new GroovyShell().parse(script);
+            new groovy.lang.GroovyShell().parse(script);
             return null;
-        } catch (CompilationFailedException e) {
-            // Return a concise error — strip internal groovy stack details
+        } catch (org.codehaus.groovy.control.CompilationFailedException e) {
             String msg = e.getMessage();
             int newline = msg.indexOf('\n');
             return newline > 0 ? msg.substring(0, newline).trim() : msg.trim();
         }
+    }
+
+    /**
+     * Actually executes the script with sample params to catch runtime errors.
+     * @return null if execution succeeded, error string if it failed
+     */
+    private String runtimeCheck(String script, Map<String, String> sampleParams) {
+        try {
+            methodExecutorService.runGroovy(script, sampleParams);
+            return null;
+        } catch (Exception e) {
+            // Strip Groovy stack noise — keep just the useful part
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            int causeIdx = msg.indexOf("Caused by:");
+            if (causeIdx > 0) msg = msg.substring(causeIdx);
+            return msg.length() > 300 ? msg.substring(0, 300) : msg;
+        }
+    }
+
+    /**
+     * Builds obvious sample values per parameter type for runtime testing.
+     */
+    private Map<String, String> buildSampleParams(List<GenerateMethodRequest.ParameterDefinition> parameters) {
+        Map<String, String> sample = new LinkedHashMap<>();
+        if (parameters == null) return sample;
+        for (var p : parameters) {
+            String val = switch (p.getType() != null ? p.getType().toLowerCase() : "string") {
+                case "number", "integer", "int" -> "5";
+                case "boolean"                  -> "true";
+                case "list"                     -> "a,b,c";
+                default                         -> "test_" + p.getName(); // string
+            };
+            sample.put(p.getName(), val);
+        }
+        return sample;
     }
 
     // ─── Prompt ───────────────────────────────────────────────────────────────
@@ -280,37 +332,45 @@ public class CustomMethodService {
         }
 
         String errorSection = previousError != null
-                ? "\nPREVIOUS ATTEMPT FAILED WITH THIS COMPILATION ERROR — fix it:\n" + previousError + "\n"
+                ? "\nPREVIOUS ATTEMPT FAILED — fix this error:\n" + previousError + "\n"
                 : "";
 
         return """
-            You are a Groovy script generator. Generate a valid, compilable Groovy script.
+            You are a Groovy script generator. Generate a valid, executable Groovy script.
             %s
             METHOD NAME: %s
             DESCRIPTION: %s
 
-            PARAMETERS (access via params["name"]):
+            PARAMETERS (available in the script as a Map<String, String> called `params`):
             %s
 
-            STRICT RULES — follow exactly or the script will fail:
-            1. Access params like this: params["paramName"] or params.get("paramName")
-            2. For default values use: def x = params["name"] ?: "default"
-            3. Return EITHER a Map (named outputs) OR a single value (becomes {method.result})
-            4. No class definitions, no @annotations, no package statements
-            5. Use only standard Groovy/Java — no external libraries
-            6. Imports are allowed but only java.* or groovy.* packages
+            CRITICAL — how to access params (this is the only correct way):
+              def value = params.get("paramName")
+              def withDefault = params.get("paramName") ?: "defaultValue"
 
-            CORRECT EXAMPLES:
+            DO NOT use params["paramName"] — it does NOT work. Always use params.get("paramName").
 
-            // Single value return:
-            def ids = params["idList"].split(",")
+            RETURN VALUE — script must return one of:
+              - A single value (String, number) → becomes {method.result}
+              - A Map of String keys → each key becomes {method.keyName}
+
+            RULES:
+            1. Only use params.get("name") to access parameters — never params["name"]
+            2. Always handle null params with ?: fallback
+            3. No class definitions, no @annotations, no package statements
+            4. Imports allowed but only java.* or groovy.*
+            5. No println or print statements
+
+            EXAMPLE — random pick from comma-separated list:
+            def idList = params.get("idList") ?: ""
+            def ids = idList.split(",")
             return ids[new Random().nextInt(ids.length)].trim()
 
-            // Map return:
-            def length = (params["length"] ?: "16").toInteger()
+            EXAMPLE — map return:
+            def length = Integer.parseInt(params.get("length") ?: "16")
             def chars = ('a'..'z') + ('A'..'Z') + ('0'..'9')
             def token = (1..length).collect { chars[new Random().nextInt(chars.size())] }.join()
-            return ["token": token, "length": length.toString()]
+            return ["token": token, "length": String.valueOf(length)]
 
             Return ONLY the raw Groovy script. No markdown, no ```, no explanation.
             """.formatted(errorSection, name, description, paramsBlock.toString());

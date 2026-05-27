@@ -11,10 +11,8 @@ public class AttachMethodRequest {
     @NotNull(message = "methodId is required")
     private Long methodId;
 
-    // Execution order among all methods on this step (1-based)
-    private Integer executionOrder = 1;
-
     // Parameter bindings — values or {placeholder} references from previous step responses
-    // e.g. {"min": "1", "max": "{data.maxAllowed}", "query": "SELECT token FROM auth WHERE active=true"}
+    // e.g. {"idList": "1,2,3", "max": "{data.maxAllowed}"}
+    // Execution order is assigned automatically by backend (appended after last existing method)
     private Map<String, String> parameterBindings;
 }
