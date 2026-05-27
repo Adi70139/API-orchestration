@@ -1,7 +1,6 @@
 package com.example.flowengine.controller;
 
 import com.example.flowengine.DTO.*;
-import com.example.flowengine.entity.StepMethod;
 import com.example.flowengine.service.CustomMethodService;
 import com.example.flowengine.service.EncryptionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -149,7 +148,7 @@ public class CustomMethodController {
     @Operation(
             summary = "List methods attached to a step",
             description = "Returns all methods attached to a step in execution order.")
-    public List<StepMethod> getStepMethods(@PathVariable Long stepId) {
+    public List<StepMethodDTO> getStepMethods(@PathVariable Long stepId) {
         return customMethodService.getStepMethods(stepId);
     }
 }

@@ -188,15 +188,26 @@ public class CustomMethodService {
                 .orElseThrow(() -> new IllegalArgumentException("Step not found: " + stepId));
         CustomMethod method = findById(request.getMethodId());
 
-        // Auto-assign execution order — append after last existing method on this step
+        // Upsert — if this method is already attached to this step, update bindings only
         List<StepMethod> existing = stepMethodRepository.findByStepIdOrderByExecutionOrder(stepId);
-        int nextOrder = existing.isEmpty() ? 1
-                : existing.stream().mapToInt(StepMethod::getExecutionOrder).max().getAsInt() + 1;
+        StepMethod sm = existing.stream()
+                .filter(s -> s.getMethod().getId().equals(request.getMethodId()))
+                .findFirst()
+                .orElse(null);
 
-        StepMethod sm = new StepMethod();
-        sm.setStep(flowStepRepository.getReferenceById(stepId));
-        sm.setMethod(method);
-        sm.setExecutionOrder(nextOrder);
+        if (sm != null) {
+            // Already attached — just update the bindings
+            log.info("Method '{}' already attached to step {} — updating bindings", method.getName(), stepId);
+        } else {
+            // New attachment — append at end
+            int nextOrder = existing.isEmpty() ? 1
+                    : existing.stream().mapToInt(StepMethod::getExecutionOrder).max().getAsInt() + 1;
+            sm = new StepMethod();
+            sm.setStep(flowStepRepository.getReferenceById(stepId));
+            sm.setMethod(method);
+            sm.setExecutionOrder(nextOrder);
+            log.info("Attached method '{}' to step {} at order {}", method.getName(), stepId, nextOrder);
+        }
 
         if (request.getParameterBindings() != null) {
             try {
@@ -207,16 +218,57 @@ public class CustomMethodService {
         }
 
         stepMethodRepository.save(sm);
-        log.info("Attached method '{}' to step {} at order {}", method.getName(), stepId, nextOrder);
     }
 
     @Transactional
     public void detachFromStep(Long stepMethodId) {
+        if (!stepMethodRepository.existsById(stepMethodId)) {
+            throw new IllegalArgumentException("Step method attachment not found: " + stepMethodId);
+        }
         stepMethodRepository.deleteById(stepMethodId);
+        log.info("Detached stepMethod id={}", stepMethodId);
     }
 
-    public List<StepMethod> getStepMethods(Long stepId) {
-        return stepMethodRepository.findByStepIdOrderByExecutionOrder(stepId);
+    public List<StepMethodDTO> getStepMethods(Long stepId) {
+        return stepMethodRepository.findByStepIdOrderByExecutionOrder(stepId)
+                .stream().map(this::toStepMethodDTO).toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private StepMethodDTO toStepMethodDTO(StepMethod sm) {
+        StepMethodDTO dto = new StepMethodDTO();
+        dto.setStepMethodId(sm.getId());
+        dto.setExecutionOrder(sm.getExecutionOrder());
+
+        CustomMethod m = sm.getMethod();
+        dto.setMethodId(m.getId());
+        dto.setMethodName(m.getName());
+        dto.setMethodDescription(m.getDescription());
+        dto.setMethodType(m.getType());
+        dto.setBuiltinType(m.getBuiltinType());
+        dto.setGlobal(m.isGlobal());
+
+        if (m.getParameterDefinitionsJson() != null) {
+            try {
+                List<CustomMethodDTO.ParameterDefinitionDTO> params = objectMapper.readValue(
+                        m.getParameterDefinitionsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(
+                                List.class, CustomMethodDTO.ParameterDefinitionDTO.class));
+                dto.setParameters(params);
+            } catch (Exception e) {
+                log.warn("Could not deserialize parameter definitions for method {}", m.getId());
+            }
+        }
+
+        if (sm.getParameterBindingsJson() != null) {
+            try {
+                dto.setParameterBindings(objectMapper.readValue(sm.getParameterBindingsJson(), Map.class));
+            } catch (Exception e) {
+                log.warn("Could not deserialize parameter bindings for stepMethod {}", sm.getId());
+            }
+        }
+
+        return dto;
     }
 
     // ─── Script generation + compile + runtime check ─────────────────────────
