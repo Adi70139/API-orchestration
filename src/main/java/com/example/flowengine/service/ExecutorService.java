@@ -44,6 +44,7 @@ public class ExecutorService {
     private final AssertionEngine assertionEngine;
     private final EnvironmentService environmentService;
     private final SkipConditionEvaluator skipConditionEvaluator;
+    private final MethodExecutorService methodExecutorService;
 
     private java.util.concurrent.ExecutorService asyncFlowExecutor;
 
@@ -231,9 +232,26 @@ public class ExecutorService {
 
             markStepInProgress(stepExecution);
 
+            // Run pre-step methods and inject their output into the placeholder context
+            List<String> previousResponsesWithMethods = new ArrayList<>(previousResponses);
+            try {
+                MethodExecutorService.StepMethodContext methodContext =
+                        methodExecutorService.runMethodsForStep(step.getId(), previousResponses);
+                if (!methodContext.mergedOutput().isEmpty()) {
+                    // Serialize method output as JSON and inject as an additional context entry
+                    // Keys are already prefixed with "method." — e.g. {"method.result": "42"}
+                    previousResponsesWithMethods.add(
+                            objectMapper.writeValueAsString(methodContext.mergedOutput()));
+                    log.info("Injected {} method output(s) into context for step '{}'",
+                            methodContext.mergedOutput().size(), step.getName());
+                }
+            } catch (Exception e) {
+                log.warn("Could not run pre-step methods for step '{}': {}", step.getName(), e.getMessage());
+            }
+
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
-                    ? executeStepWithPolling(step, previousResponses, stepExecution)
-                    : executeStepWithRetry(step, previousResponses, stepExecution);
+                    ? executeStepWithPolling(step, previousResponsesWithMethods, stepExecution)
+                    : executeStepWithRetry(step, previousResponsesWithMethods, stepExecution);
             markStepCompleted(stepExecution, stepResult);
             stepResults.add(stepResult);
 
