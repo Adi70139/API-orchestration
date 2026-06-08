@@ -23,35 +23,28 @@ import java.util.*;
 @RequiredArgsConstructor
 public class HarImportService {
 
-    // File extensions that are never API calls
     private static final Set<String> SKIP_EXTENSIONS = Set.of(
             ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
             ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".avif"
     );
 
-    // Response MIME types that are never API responses
     private static final Set<String> SKIP_MIME_PREFIXES = Set.of(
             "text/html", "text/css", "application/javascript", "text/javascript",
             "image/", "font/", "audio/", "video/"
     );
 
-    // HAR resourceType values that indicate XHR/Fetch
     private static final Set<String> API_RESOURCE_TYPES = Set.of("xhr", "fetch", "other");
 
-    // URL segments that indicate framework-internal requests
     private static final Set<String> SKIP_URL_SEGMENTS = Set.of(
-            "/_next/", "/__nextjs", "/node_modules/", "/.nuxt/", "/__vite"
+            "/_next/", "/__nextjs", "/node_modules/", "/.nuxt/"
     );
 
-    // Headers to strip — connection/encoding noise only.
-    // NOTE: cookie and authorization are intentionally kept — they are required for auth.
+    // Only strip truly useless headers — keep cookie, authorization, content-type
     private static final Set<String> SKIP_HEADERS = Set.of(
             "host", "connection", "content-length", "accept-encoding",
             "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
             "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
-            "upgrade-insecure-requests", "cache-control", "pragma",
-            "if-none-match", "if-modified-since"
-            // cookie and authorization are NOT in this list — they are kept
+            "upgrade-insecure-requests"
     );
 
     private final ModuleRepository moduleRepository;
@@ -74,7 +67,6 @@ public class HarImportService {
         ModuleEntity module = moduleRepository.findById(request.getModuleId())
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + request.getModuleId()));
 
-        // Resolve or create flow
         FlowDefinition flow;
         if (request.getFlowId() != null) {
             flow = flowRepository.findById(request.getFlowId())
@@ -90,11 +82,12 @@ public class HarImportService {
             log.info("Created new flow '{}' for HAR import", flow.getName());
         }
 
-        // Start stepOrder after existing steps
         int stepOrder = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId()).stream()
                 .mapToInt(FlowStep::getStepOrder).max().orElse(0) + 1;
 
         int created = 0, skipped = 0;
+        // Track fingerprints to deduplicate identical requests
+        Set<String> seenFingerprints = new LinkedHashSet<>();
 
         for (JsonNode entry : entries) {
             JsonNode req = entry.path("request");
@@ -116,6 +109,15 @@ public class HarImportService {
                 }
             }
 
+            // Deduplication — build fingerprint from method + cleaned URL + normalized body
+            String rawBody = req.path("postData").path("text").asText("").trim();
+            String fingerprint = method + "|" + cleanUrl(url) + "|" + normalizeBody(rawBody);
+            if (!seenFingerprints.add(fingerprint)) {
+                log.debug("Skipping duplicate: {} {}", method, url);
+                skipped++;
+                continue;
+            }
+
             try {
                 FlowStep step = buildStep(entry, req, headers, flow, stepOrder,
                         request.isIncludeResponseAsLastResponse());
@@ -128,7 +130,7 @@ public class HarImportService {
             }
         }
 
-        log.info("HAR import complete — {} steps created, {} entries skipped", created, skipped);
+        log.info("HAR import complete — {} steps created, {} entries skipped (incl. duplicates)", created, skipped);
 
         if (created == 0) {
             throw new IllegalArgumentException(
@@ -138,75 +140,57 @@ public class HarImportService {
                             "- HAR only contains frontend framework traffic (Next.js RSC, React, Angular)\n" +
                             "- All requests are static assets (JS, CSS, images)\n" +
                             "- All requests failed (4xx/5xx)\n" +
-                            "Tip: Use 'filterDomain' to target only your backend API domain, " +
-                            "and make sure to perform actual API calls (not just page navigation) during recording."
+                            "Tip: Use 'filterDomain' to target only your backend API domain."
             );
         }
 
         return flowService.getById(flow.getId());
     }
 
-    // ─── Entry filtering ──────────────────────────────────────────────────────
+    // ─── Filtering ────────────────────────────────────────────────────────────
 
     private boolean shouldInclude(JsonNode entry, String url, String method, Map<String, String> headers) {
         if (url.isBlank()) return false;
+        if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("chrome-extension:")) return false;
 
-        // Skip browser internal URLs
-        if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("chrome-extension:")) {
-            return false;
-        }
-
-        // Skip framework-internal URL paths
         for (String seg : SKIP_URL_SEGMENTS) {
             if (url.contains(seg)) return false;
         }
 
-        // Skip by file extension
         String pathOnly = url.split("\\?")[0].toLowerCase();
         for (String ext : SKIP_EXTENSIONS) {
             if (pathOnly.endsWith(ext)) return false;
         }
 
-        // Skip preflight and HEAD
         if ("OPTIONS".equals(method) || "HEAD".equals(method)) return false;
 
-        // Skip Next.js RSC (React Server Component) page navigation
+        // Next.js framework calls
         if ("1".equals(headers.get("rsc"))) return false;
         if (url.contains("_rsc=")) return false;
         if (headers.containsKey("next-router-prefetch")) return false;
-
-        // Skip Next.js Server Actions — have next-action header + text/plain body
-        // These are encrypted framework calls, not replayable REST APIs
         if (headers.containsKey("next-action")) return false;
 
-        // Skip failed HTTP responses
+        // Failed HTTP responses
         int status = entry.path("response").path("status").asInt(0);
-        if (status >= 400) {
-            log.debug("Skipping failed request {} {} (HTTP {})", method, url, status);
-            return false;
-        }
+        if (status >= 400) return false;
 
-        // Skip HTTP 200 responses whose body signals an error
+        // HTTP 200 but body signals error
         if (status == 200) {
             String responseText = entry.path("response").path("content").path("text").asText("").trim();
             if (!responseText.isBlank() && responseText.startsWith("{")) {
                 try {
-                    if (hasErrorStatusInBody(objectMapper.readTree(responseText))) {
-                        log.debug("Skipping {} {} — HTTP 200 but body contains error status", method, url);
-                        return false;
-                    }
+                    if (hasErrorStatusInBody(objectMapper.readTree(responseText))) return false;
                 } catch (Exception ignored) {}
             }
         }
 
-        // Check Chrome's _resourceType tag
+        // Chrome resourceType
         JsonNode resourceType = entry.path("_resourceType");
         if (!resourceType.isMissingNode()) {
-            String type = resourceType.asText("").toLowerCase();
-            if (!API_RESOURCE_TYPES.contains(type)) return false;
+            if (!API_RESOURCE_TYPES.contains(resourceType.asText("").toLowerCase())) return false;
         }
 
-        // Check response MIME type
+        // Response MIME
         String mime = entry.path("response").path("content").path("mimeType").asText("").toLowerCase();
         if (!mime.isBlank()) {
             for (String skip : SKIP_MIME_PREFIXES) {
@@ -215,6 +199,45 @@ public class HarImportService {
         }
 
         return true;
+    }
+
+    // ─── Body normalization for deduplication ─────────────────────────────────
+
+    /**
+     * Normalizes request body for fingerprinting.
+     * For requests wrapping an inner API call (e.g. encryptedPayload pattern),
+     * uses the inner apiURL + method as the fingerprint key so that
+     * identical wrapper calls with the same inner intent are deduplicated,
+     * while different inner calls are preserved even on the same outer endpoint.
+     */
+    private String normalizeBody(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) return "";
+        try {
+            JsonNode body = objectMapper.readTree(rawBody);
+            // Detect wrapper pattern: { encryptedPayload: { apiURL, method, payload } }
+            JsonNode payload = body.path("encryptedPayload");
+            if (!payload.isMissingNode() && payload.isObject()) {
+                String innerUrl = payload.path("apiURL").asText("");
+                String innerMethod = payload.path("method").asText("");
+                JsonNode innerPayload = payload.path("payload");
+                // If inner payload is empty ({} or []) — use only apiURL+method as fingerprint
+                // This deduplicates repeated metadata/config fetches with no actual data
+                if (isEmptyNode(innerPayload)) {
+                    return "WRAPPED|" + innerMethod + "|" + innerUrl;
+                }
+                // Inner payload has data — include it to preserve distinct business calls
+                return "WRAPPED|" + innerMethod + "|" + innerUrl + "|" + innerPayload.toString();
+            }
+        } catch (Exception ignored) {}
+        // Not a wrapper pattern — use raw body as-is
+        return rawBody;
+    }
+
+    private boolean isEmptyNode(JsonNode node) {
+        if (node.isMissingNode() || node.isNull()) return true;
+        if (node.isObject()) return node.size() == 0;
+        if (node.isArray()) return node.size() == 0;
+        return false;
     }
 
     // ─── Body error check ─────────────────────────────────────────────────────
@@ -233,8 +256,7 @@ public class HarImportService {
             if (node.isTextual()) {
                 String val = node.asText("").trim().toLowerCase();
                 if (errorStrings.contains(val)) return true;
-                try { if (Integer.parseInt(val) >= 400) return true; }
-                catch (NumberFormatException ignored) {}
+                try { if (Integer.parseInt(val) >= 400) return true; } catch (NumberFormatException ignored) {}
             }
         }
         return false;
@@ -253,18 +275,14 @@ public class HarImportService {
         step.setUrl(cleanUrl(rawUrl));
         step.setName(deriveName(rawUrl, stepOrder));
 
-        // Store filtered headers — cookie and authorization ARE included
         Map<String, String> filteredHeaders = new LinkedHashMap<>();
         headers.forEach((k, v) -> {
-            if (!SKIP_HEADERS.contains(k)) {
-                filteredHeaders.put(k, v);
-            }
+            if (!SKIP_HEADERS.contains(k)) filteredHeaders.put(k, v);
         });
         if (!filteredHeaders.isEmpty()) {
             step.setHeadersJson(objectMapper.writeValueAsString(filteredHeaders));
         }
 
-        // Request body
         JsonNode postData = req.path("postData");
         if (!postData.isMissingNode() && postData.has("text")) {
             String bodyText = postData.path("text").asText("").trim();
@@ -278,7 +296,6 @@ public class HarImportService {
             }
         }
 
-        // Store response as lastResponseBody — only if it's valid JSON (not RSC/HTML payloads)
         if (captureResponse) {
             String responseText = entry.path("response").path("content").path("text").asText("").trim();
             if (!responseText.isBlank() && isJsonResponse(entry, responseText)) {
@@ -289,23 +306,11 @@ public class HarImportService {
         return step;
     }
 
-    /**
-     * Only store response as lastResponseBody if it's actual JSON — not RSC wire format,
-     * not HTML, not plain text. This prevents garbage from polluting assertion generation.
-     */
     private boolean isJsonResponse(JsonNode entry, String responseText) {
-        // Check MIME type first
         String mime = entry.path("response").path("content").path("mimeType").asText("").toLowerCase();
         if (mime.contains("json")) return true;
-
-        // Fall back to content inspection — must start with { or [
         if (responseText.startsWith("{") || responseText.startsWith("[")) {
-            try {
-                objectMapper.readTree(responseText);
-                return true;
-            } catch (Exception e) {
-                return false;
-            }
+            try { objectMapper.readTree(responseText); return true; } catch (Exception e) { return false; }
         }
         return false;
     }
@@ -340,7 +345,9 @@ public class HarImportService {
             String[] parts = path.split("/");
             for (int i = parts.length - 1; i >= 0; i--) {
                 String part = parts[i].trim();
-                if (!part.isBlank() && !part.matches("[\\da-f]{8}-[\\da-f]{4}-.*") && !part.matches("\\d+")) {
+                if (!part.isBlank()
+                        && !part.matches("[\\da-f]{8}-[\\da-f]{4}-.*")
+                        && !part.matches("\\d+")) {
                     return "Step " + stepOrder + " - " + part.replaceAll("[_-]", " ");
                 }
             }

@@ -105,6 +105,13 @@
             <version>4.0.21</version>
         </dependency>
 
+        <!-- MockMultipartFile used in BrowserRecordingService to bridge CDP → HAR pipeline -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+            <scope>compile</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

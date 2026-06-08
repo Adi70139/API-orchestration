@@ -109,6 +109,7 @@ public class ReportController {
     public ModuleReportDTO getScheduleRunReportData(@PathVariable Long moduleExecutionId) {
         return reportService.getModuleReportData(moduleExecutionId);
     }
+    @GetMapping("/bulk/{bulkJobId}/data")
     @Operation(summary = "Get bulk job report data", description = "Get JSON data for a bulk execution job for UI display.")
     public BulkReportDTO getBulkReportData(@PathVariable Long bulkJobId) {
         return reportService.getBulkReportData(bulkJobId);
