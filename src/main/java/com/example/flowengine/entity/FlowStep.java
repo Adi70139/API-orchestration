@@ -40,6 +40,9 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String bodyJson;
 
+    @Column(name = "body_source_step_id")
+    private Long bodySourceStepId;
+
     // Assertions evaluated at execution time — saved explicitly by user
     @Column(columnDefinition = "TEXT")
     private String assertionsJson;

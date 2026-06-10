@@ -15,7 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -172,6 +174,7 @@ public class FlowService {
 
         // Copy all steps
         List<FlowStep> originalSteps = flowStepRepository.findByFlowIdOrderByStepOrder(original.getId());
+        Map<Long, Long> duplicatedStepIds = new HashMap<>();
         for (FlowStep originalStep : originalSteps) {
             FlowStep newStep = new FlowStep();
             newStep.setFlow(duplicate);
@@ -181,9 +184,13 @@ public class FlowService {
             newStep.setUrl(originalStep.getUrl());
             newStep.setHeadersJson(originalStep.getHeadersJson());
             newStep.setBodyJson(originalStep.getBodyJson());
+            if (originalStep.getBodySourceStepId() != null) {
+                newStep.setBodySourceStepId(duplicatedStepIds.get(originalStep.getBodySourceStepId()));
+            }
             //  newStep.setRequiredParams(originalStep.getRequiredParams());
             newStep.setAssertionsJson(originalStep.getAssertionsJson());
-            flowStepRepository.save(newStep);
+            newStep = flowStepRepository.save(newStep);
+            duplicatedStepIds.put(originalStep.getId(), newStep.getId());
         }
 
         FlowDefinition saved = flowRepository.findById(duplicate.getId()).orElseThrow();
@@ -232,6 +239,7 @@ public class FlowService {
                         stepDTO.setUrl(step.getUrl());
                         stepDTO.setHeadersJson(step.getHeadersJson());
                         stepDTO.setBodyJson(step.getBodyJson());
+                        stepDTO.setBodySourceStepId(step.getBodySourceStepId());
 
                         // Deserialize assertionsJson into structured object
                         if (step.getAssertionsJson() != null) {

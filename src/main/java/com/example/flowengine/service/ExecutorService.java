@@ -6,6 +6,7 @@ import com.example.flowengine.constants.ExecutionStatus;
 import com.example.flowengine.entity.*;
 import com.example.flowengine.repository.*;
 import com.example.flowengine.utils.PlaceholderUtils;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -180,6 +182,7 @@ public class ExecutorService {
         }
 
         List<String> previousResponses = new ArrayList<>();
+        Map<Long, String> responsesByStepId = new HashMap<>();
         if (!envVariables.isEmpty()) {
             try {
                 previousResponses.add(objectMapper.writeValueAsString(envVariables));
@@ -250,13 +253,14 @@ public class ExecutorService {
             }
 
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
-                    ? executeStepWithPolling(step, previousResponsesWithMethods, stepExecution)
-                    : executeStepWithRetry(step, previousResponsesWithMethods, stepExecution);
+                    ? executeStepWithPolling(step, previousResponsesWithMethods, responsesByStepId, stepExecution)
+                    : executeStepWithRetry(step, previousResponsesWithMethods, responsesByStepId, stepExecution);
             markStepCompleted(stepExecution, stepResult);
             stepResults.add(stepResult);
 
             if (stepResult.isSuccess()) {
                 previousResponses.add(stepResult.getResponseBody());
+                responsesByStepId.put(step.getId(), stepResult.getResponseBody());
                 // Persist latest response body on the step entity for LLM generators
                 step.setLastResponseBody(stepResult.getResponseBody());
                 flowStepRepository.save(step);
@@ -369,7 +373,9 @@ public class ExecutorService {
      * Retries only on network errors (Exception) and 5xx responses.
      * Never retries 4xx (client error) or assertion failures (deterministic).
      */
-    private StepExecutionResult executeStepWithRetry(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
+    private StepExecutionResult executeStepWithRetry(FlowStep step, List<String> previousResponses,
+                                                     Map<Long, String> responsesByStepId,
+                                                     StepExecution stepExecution) {
         // Null-safe — existing steps in DB may have null if created before retry columns were added
         int retryCount = step.getRetryCount() != null ? step.getRetryCount() : 0;
         int delayMs = step.getRetryDelayMs() != null ? step.getRetryDelayMs() : 1000;
@@ -401,7 +407,7 @@ public class ExecutorService {
                 }
             }
 
-            lastResult = executeStep(step, previousResponses, stepExecution);
+            lastResult = executeStep(step, previousResponses, responsesByStepId, stepExecution);
 
             // Record this attempt
             RetryAttemptResult attemptResult = new RetryAttemptResult();
@@ -470,7 +476,9 @@ public class ExecutorService {
      *   - pollMaxAttempts exhausted → FAIL with "polling timed out"
      * Unlike retry, 4xx responses are expected and do NOT stop polling.
      */
-    private StepExecutionResult executeStepWithPolling(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
+    private StepExecutionResult executeStepWithPolling(FlowStep step, List<String> previousResponses,
+                                                       Map<Long, String> responsesByStepId,
+                                                       StepExecution stepExecution) {
         int maxAttempts = step.getPollMaxAttempts() != null ? step.getPollMaxAttempts() : 10;
         int intervalMs = step.getPollIntervalMs() != null ? step.getPollIntervalMs() : 5000;
         int expectedStatus = step.getPollExpectedStatus() != null ? step.getPollExpectedStatus() : 200;
@@ -490,7 +498,7 @@ public class ExecutorService {
                 try { Thread.sleep(intervalMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
             }
 
-            lastResult = executeStep(step, previousResponses, stepExecution);
+            lastResult = executeStep(step, previousResponses, responsesByStepId, stepExecution);
 
             PollAttemptResult pollAttempt = new PollAttemptResult();
             pollAttempt.setAttempt(attempt);
@@ -545,13 +553,15 @@ public class ExecutorService {
         return lastResult;
     }
 
-    private StepExecutionResult executeStep(FlowStep step, List<String> previousResponses, StepExecution stepExecution) {
+    private StepExecutionResult executeStep(FlowStep step, List<String> previousResponses,
+                                            Map<Long, String> responsesByStepId,
+                                            StepExecution stepExecution) {
         long start = System.currentTimeMillis();
 
         try {
             String resolvedUrl = PlaceholderUtils.resolve(step.getUrl(), previousResponses);
             String resolvedHeaders = PlaceholderUtils.resolve(step.getHeadersJson(), previousResponses);
-            String resolvedBody = PlaceholderUtils.resolve(step.getBodyJson(), previousResponses);
+            String resolvedBody = resolveRequestBody(step, previousResponses, responsesByStepId);
 
             stepExecution.setResolvedUrl(resolvedUrl);
             stepExecution.setResolvedHeadersJson(resolvedHeaders);
@@ -685,6 +695,49 @@ public class ExecutorService {
             result.setDurationMs(duration);
             return result;
         }
+    }
+
+    private String resolveRequestBody(FlowStep step, List<String> previousResponses,
+                                      Map<Long, String> responsesByStepId) throws Exception {
+        String resolvedOverrides = PlaceholderUtils.resolve(step.getBodyJson(), previousResponses);
+        if (step.getBodySourceStepId() == null) {
+            return resolvedOverrides;
+        }
+
+        String sourceBody = responsesByStepId.get(step.getBodySourceStepId());
+        if (sourceBody == null || sourceBody.isBlank()) {
+            throw new IllegalArgumentException(
+                    "No successful response body available from source step: " + step.getBodySourceStepId());
+        }
+
+        JsonNode source = objectMapper.readTree(sourceBody);
+        if (resolvedOverrides == null || resolvedOverrides.isBlank()) {
+            return objectMapper.writeValueAsString(source);
+        }
+
+        JsonNode overrides = objectMapper.readTree(resolvedOverrides);
+        if (!source.isObject() || !overrides.isObject()) {
+            return objectMapper.writeValueAsString(overrides);
+        }
+
+        JsonNode merged = source.deepCopy();
+        deepMerge((com.fasterxml.jackson.databind.node.ObjectNode) merged,
+                (com.fasterxml.jackson.databind.node.ObjectNode) overrides);
+        return objectMapper.writeValueAsString(merged);
+    }
+
+    private void deepMerge(com.fasterxml.jackson.databind.node.ObjectNode target,
+                           com.fasterxml.jackson.databind.node.ObjectNode overrides) {
+        overrides.fields().forEachRemaining(entry -> {
+            JsonNode existing = target.get(entry.getKey());
+            JsonNode override = entry.getValue();
+            if (existing != null && existing.isObject() && override.isObject()) {
+                deepMerge((com.fasterxml.jackson.databind.node.ObjectNode) existing,
+                        (com.fasterxml.jackson.databind.node.ObjectNode) override);
+            } else {
+                target.set(entry.getKey(), override);
+            }
+        });
     }
 
     private boolean requiresBody(String method) {

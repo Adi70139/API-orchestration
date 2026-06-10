@@ -48,6 +48,7 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
+        mapBodySource(step, request, flowId, maxOrder + 1);
         mapRetryConfig(step, request);
         mapAssertions(step, request);
         mapSkipCondition(step, request);
@@ -74,6 +75,7 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
+        mapBodySource(step, request, step.getFlow().getId(), step.getStepOrder());
         mapRetryConfig(step, request);
         mapAssertions(step, request);
         mapSkipCondition(step, request);
@@ -115,6 +117,14 @@ public class FlowStepService {
             if (!finalOrders.add(step.getStepOrder())) {
                 throw new IllegalArgumentException("Duplicate step order after reorder: " + step.getStepOrder());
             }
+            if (step.getBodySourceStepId() != null) {
+                FlowStep source = stepsById.get(step.getBodySourceStepId());
+                if (source == null || source.getStepOrder() >= step.getStepOrder()) {
+                    throw new IllegalArgumentException(
+                            "Step " + step.getId() + " must remain after its body source step "
+                                    + step.getBodySourceStepId());
+                }
+            }
         }
 
         flowStepRepository.saveAll(existingSteps);
@@ -144,6 +154,7 @@ public class FlowStepService {
         duplicate.setUrl(original.getUrl());
         duplicate.setHeadersJson(original.getHeadersJson());
         duplicate.setBodyJson(original.getBodyJson());
+        duplicate.setBodySourceStepId(original.getBodySourceStepId());
         duplicate.setAssertionsJson(original.getAssertionsJson());
         duplicate.setRetryCount(original.getRetryCount());
         duplicate.setRetryDelayMs(original.getRetryDelayMs());
@@ -154,10 +165,43 @@ public class FlowStepService {
     }
 
     public void delete(Long stepId) {
-        if (!flowStepRepository.existsById(stepId)) {
-            throw new IllegalArgumentException("FlowStep not found with id: " + stepId);
+        FlowStep step = getById(stepId);
+        List<Long> dependentStepIds = flowStepRepository.findByFlowIdOrderByStepOrder(step.getFlow().getId()).stream()
+                .filter(candidate -> stepId.equals(candidate.getBodySourceStepId()))
+                .map(FlowStep::getId)
+                .toList();
+        if (!dependentStepIds.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Cannot delete step " + stepId + " because it provides the request body for steps: "
+                            + dependentStepIds);
         }
         flowStepRepository.deleteById(stepId);
+    }
+
+    private void mapBodySource(FlowStep step, FlowStepRequest request, Long flowId, Integer stepOrder) {
+        if (!Boolean.TRUE.equals(request.getInheritBodyFromPreviousStep())) {
+            step.setBodySourceStepId(null);
+            return;
+        }
+
+        Long sourceStepId = request.getBodySourceStepId();
+        if (sourceStepId == null) {
+            sourceStepId = flowStepRepository.findByFlowIdOrderByStepOrder(flowId).stream()
+                    .filter(candidate -> candidate.getStepOrder() < stepOrder)
+                    .max(java.util.Comparator.comparing(FlowStep::getStepOrder))
+                    .map(FlowStep::getId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Body inheritance requires a previous step"));
+        }
+
+        FlowStep sourceStep = getById(sourceStepId);
+        if (!sourceStep.getFlow().getId().equals(flowId)) {
+            throw new IllegalArgumentException("Body source step does not belong to flow: " + flowId);
+        }
+        if (sourceStep.getStepOrder() >= stepOrder) {
+            throw new IllegalArgumentException("Body source must be a previous step in the flow");
+        }
+        step.setBodySourceStepId(sourceStepId);
     }
 
     private void mapRetryConfig(FlowStep step, FlowStepRequest request) {

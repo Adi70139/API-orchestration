@@ -270,6 +270,25 @@ PUT /flows/{flowId}/steps/{stepId}
 
 ---
 
+### Inherit Request Body from a Previous Step
+
+Set `inheritBodyFromPreviousStep` to `true` while creating or updating a step. The selected step's response body becomes the request body, and `bodyJson` is deep-merged on top as overrides or new fields.
+
+```json
+{
+  "name": "Submit Updated Lead",
+  "method": "POST",
+  "url": "{baseUrl}/leads/submit",
+  "inheritBodyFromPreviousStep": true,
+  "bodySourceStepId": 2,
+  "bodyJson": "{\"status\":\"SUBMITTED\",\"metadata\":{\"source\":\"flow-engine\"}}"
+}
+```
+
+Omit `bodySourceStepId` to use the immediate previous step. Only steps earlier in the flow can be selected. Object fields are merged recursively; override values replace matching fields.
+
+---
+
 ### Reorder Steps
 ```
 PUT /flows/{flowId}/steps/reorder

@@ -25,6 +25,11 @@ public class FlowStepRequest {
 
     private String bodyJson;
 
+    // Build this step's request body from a previous step's response body.
+    // bodyJson is deep-merged on top as overrides/new fields.
+    private Boolean inheritBodyFromPreviousStep;
+    private Long bodySourceStepId; // null = immediate previous step when inheritance is enabled
+
     private AssertionsRequest assertions;
 
     private Integer retryCount;      // null = use default (0)
