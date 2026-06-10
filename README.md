@@ -363,6 +363,46 @@ The importer creates one step per API operation from `paths`. It uses available 
 
 ---
 
+## Application Assistant
+
+The application assistant answers Flow Engine questions and helps create or manage modules, flows, steps, and environments.
+It only supports application-related topics. Mutating actions are proposed first and execute only after confirmation.
+
+### Ask a Question or Propose Actions
+```
+POST /assistant/chat
+```
+```json
+{
+  "message": "Create a Payments module and explain how placeholders work",
+  "executeActions": false,
+  "history": []
+}
+```
+
+The response includes a natural-language `reply`, proposed `actions`, and `confirmationRequired`.
+
+### Confirm Proposed Actions
+Send the same instruction with `executeActions` set to `true`:
+
+```json
+{
+  "message": "Create a Payments module with description Payment API flows",
+  "executeActions": true
+}
+```
+
+Read-only actions such as listing modules, flows, and steps execute without confirmation. The assistant uses the configured
+`LLM_PROVIDER` (`ollama` or `groq`) and is restricted to an internal allowlist of Flow Engine operations.
+
+The frontend can retrieve the supported tool catalog and required parameters from:
+
+```
+GET /assistant/tools
+```
+
+---
+
 ## Execution
 
 Runs flows and modules. Placeholder values are resolved from previous step responses — no input context required.

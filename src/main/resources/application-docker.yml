@@ -64,4 +64,5 @@ groq:
 
 logging:
   level:
+    com.example.flowengine.service.AppAssistantService: INFO
     com.itextpdf.layout.renderer.TableWidths: ERROR
