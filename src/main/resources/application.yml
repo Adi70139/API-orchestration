@@ -7,13 +7,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
-    show-sql: ${SPRING_JPA_SHOW_SQL:true}
-
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
 
   flyway:
     enabled: true
-    baseline-on-migrate: true   # treats existing DB as already at V1 baseline
-    baseline-version: 1         # V1 = baseline, so V2+ will run on existing DBs
+    baseline-on-migrate: true
+    baseline-version: 1
     locations: classpath:db/migration
     validate-on-migrate: true
 
@@ -29,7 +28,6 @@ app:
   encryption:
     secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
 
-# OkHttp client configuration
 http:
   client:
     connect-timeout-seconds: ${HTTP_CONNECT_TIMEOUT:10}
@@ -41,29 +39,31 @@ http:
     max-concurrent-requests: ${HTTP_MAX_CONCURRENT_REQUESTS:20}
     max-concurrent-requests-per-host: ${HTTP_MAX_CONCURRENT_REQUESTS_PER_HOST:10}
 
-# Scheduler thread pool (handles scheduled triggers + bulk job orchestration)
 scheduler:
   thread-pool-size: ${SCHEDULER_POOL_SIZE:20}
 
-# Bulk execution dedicated thread pool
 bulk:
   executor:
     thread-pool-size: ${BULK_EXECUTOR_POOL_SIZE:10}
 
+# LLM — Groq is the default for both local and deployed.
+# Get a free key at https://console.groq.com and set GROQ_API_KEY env var.
 llm:
-  provider: ${LLM_PROVIDER:ollama}
-
-ollama:
-  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-  model: ${OLLAMA_MODEL:llama3.2}
+  provider: ${LLM_PROVIDER:groq}
 
 groq:
   api:
     key: ${GROQ_API_KEY:}
-  model: ${GROQ_MODEL:llama-3.1-8b-instant}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+
+# Ollama kept as fallback — set LLM_PROVIDER=ollama to use it.
+# Requires a tool-calling model: ollama pull llama3.1
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:llama3.1}
 
 logging:
   level:
     com.example.flowengine.service.AppAssistantService: INFO
     com.example.flowengine.service.AssertionGeneratorService: DEBUG
-    com.itextpdf.layout.renderer.TableWidths: ERROR  # suppress cosmetic cell min-width warnings
+    com.itextpdf.layout.renderer.TableWidths: ERROR
