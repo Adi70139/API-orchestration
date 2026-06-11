@@ -9,17 +9,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 /**
  * All tools exposed to the LangChain4j AI agent.
- * Each @Tool method is a discrete, typed function the LLM can call via function-calling.
- * The LLM never constructs raw JSON actions — it calls these methods directly.
+ *
+ * Destructive tools (delete/update) require confirmed=true.
+ * When confirmed=false the tool returns a confirmation prompt instead of executing —
+ * the LLM then surfaces that to the user and waits for explicit approval.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class FlowEngineTools {
+
+    private static final String CONFIRM_MSG =
+            "NEEDS_CONFIRMATION: %s. Reply 'yes' or 'confirm' to proceed.";
 
     private final ModuleService moduleService;
     private final FlowService flowService;
@@ -54,11 +57,17 @@ public class FlowEngineTools {
         return String.format("Module created: [id=%d] %s", created.getId(), created.getName());
     }
 
-    @Tool("Update an existing module's name and/or description.")
+    @Tool("Update an existing module's name and/or description. Requires user confirmation before executing.")
     public String updateModule(
             @P("ID of the module to update") Long moduleId,
             @P("New name for the module") String name,
-            @P("New description for the module (optional)") String description) {
+            @P("New description for the module") String description,
+            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Update module [id=%d] — set name='%s', description='%s'",
+                            moduleId, name, description));
+        }
         log.info("[Tool] updateModule id={}", moduleId);
         ModuleUpdateRequest req = new ModuleUpdateRequest();
         req.setName(name);
@@ -67,8 +76,14 @@ public class FlowEngineTools {
         return String.format("Module updated: [id=%d] %s", updated.getId(), updated.getName());
     }
 
-    @Tool("Delete a module by its ID. This also deletes all flows and steps inside it.")
-    public String deleteModule(@P("ID of the module to delete") Long moduleId) {
+    @Tool("Delete a module and all its flows and steps. Requires user confirmation before executing.")
+    public String deleteModule(
+            @P("ID of the module to delete") Long moduleId,
+            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Delete module [id=%d] — this will also delete all its flows and steps", moduleId));
+        }
         log.info("[Tool] deleteModule id={}", moduleId);
         moduleService.delete(moduleId);
         return "Module " + moduleId + " deleted.";
@@ -76,7 +91,7 @@ public class FlowEngineTools {
 
     // ── Flows ─────────────────────────────────────────────────────────────────
 
-    @Tool("List all flows across all modules. Returns id, name, description, and module name for each.")
+    @Tool("List all flows across all modules. Returns id, name, and module name for each.")
     public String listFlows() {
         log.info("[Tool] listFlows");
         var flows = flowService.getAll();
@@ -103,10 +118,10 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Create a new flow inside a module. Use the module NAME (not ID) in the module parameter.")
+    @Tool("Create a new flow inside a module.")
     public String createFlow(
             @P("Name for the new flow") String name,
-            @P("Name of the module this flow belongs to (use module name, not ID)") String moduleName,
+            @P("Name of the module this flow belongs to") String moduleName,
             @P("Optional description of the flow") String description) {
         log.info("[Tool] createFlow name={} module={}", name, moduleName);
         FlowRequest req = new FlowRequest();
@@ -117,12 +132,17 @@ public class FlowEngineTools {
         return String.format("Flow created: [id=%d] %s in module '%s'", created.getId(), created.getName(), moduleName);
     }
 
-    @Tool("Update a flow's name or description.")
+    @Tool("Update a flow's name or description. Requires user confirmation before executing.")
     public String updateFlow(
             @P("ID of the flow to update") Long flowId,
             @P("New name for the flow") String name,
-            @P("New description (optional)") String description,
-            @P("Module name (required even if unchanged)") String moduleName) {
+            @P("New description") String description,
+            @P("Module name (required even if unchanged)") String moduleName,
+            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Update flow [id=%d] — set name='%s'", flowId, name));
+        }
         log.info("[Tool] updateFlow id={}", flowId);
         FlowRequest req = new FlowRequest();
         req.setName(name);
@@ -132,8 +152,14 @@ public class FlowEngineTools {
         return String.format("Flow updated: [id=%d] %s", updated.getId(), updated.getName());
     }
 
-    @Tool("Delete a flow by its ID.")
-    public String deleteFlow(@P("ID of the flow to delete") Long flowId) {
+    @Tool("Delete a flow by its ID. Requires user confirmation before executing.")
+    public String deleteFlow(
+            @P("ID of the flow to delete") Long flowId,
+            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Delete flow [id=%d] — this will also delete all its steps", flowId));
+        }
         log.info("[Tool] deleteFlow id={}", flowId);
         flowService.delete(flowId);
         return "Flow " + flowId + " deleted.";
@@ -163,14 +189,14 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Create a new HTTP step in a flow. Method must be GET, POST, PUT, PATCH, or DELETE.")
+    @Tool("Create a new HTTP step in a flow.")
     public String createStep(
             @P("ID of the flow to add the step to") Long flowId,
             @P("Name of the step") String name,
             @P("HTTP method: GET, POST, PUT, PATCH, or DELETE") String method,
             @P("URL for the step. Use {placeholder} syntax to reference previous step response fields") String url,
             @P("Optional description") String description,
-            @P("Optional JSON string for request headers, e.g. {\"Authorization\": \"Bearer {token}\"}") String headersJson,
+            @P("Optional JSON string for request headers") String headersJson,
             @P("Optional JSON string for request body") String bodyJson) {
         log.info("[Tool] createStep flowId={} method={} url={}", flowId, method, url);
         FlowStepRequest req = new FlowStepRequest();
@@ -185,7 +211,7 @@ public class FlowEngineTools {
                 created.getId(), created.getName(), created.getStepOrder(), flowId);
     }
 
-    @Tool("Update an existing step's properties.")
+    @Tool("Update an existing step's properties. Requires user confirmation before executing.")
     public String updateStep(
             @P("ID of the step to update") Long stepId,
             @P("Name of the step") String name,
@@ -193,7 +219,13 @@ public class FlowEngineTools {
             @P("URL for the step") String url,
             @P("Optional description") String description,
             @P("Optional JSON string for request headers") String headersJson,
-            @P("Optional JSON string for request body") String bodyJson) {
+            @P("Optional JSON string for request body") String bodyJson,
+            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Update step [id=%d] — set name='%s', method=%s, url='%s'",
+                            stepId, name, method, url));
+        }
         log.info("[Tool] updateStep id={}", stepId);
         FlowStepRequest req = new FlowStepRequest();
         req.setName(name);
@@ -206,8 +238,14 @@ public class FlowEngineTools {
         return String.format("Step updated: [id=%d] '%s'", updated.getId(), updated.getName());
     }
 
-    @Tool("Delete a step by its ID.")
-    public String deleteStep(@P("ID of the step to delete") Long stepId) {
+    @Tool("Delete a step by its ID. Requires user confirmation before executing.")
+    public String deleteStep(
+            @P("ID of the step to delete") Long stepId,
+            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Delete step [id=%d]", stepId));
+        }
         log.info("[Tool] deleteStep id={}", stepId);
         flowStepService.delete(stepId);
         return "Step " + stepId + " deleted.";
@@ -248,8 +286,14 @@ public class FlowEngineTools {
         return String.format("Environment created: [id=%d] %s", created.getId(), created.getName());
     }
 
-    @Tool("Delete an environment by its ID.")
-    public String deleteEnvironment(@P("ID of the environment to delete") Long environmentId) {
+    @Tool("Delete an environment by its ID. Requires user confirmation before executing.")
+    public String deleteEnvironment(
+            @P("ID of the environment to delete") Long environmentId,
+            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
+        if (!confirmed) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Delete environment [id=%d]", environmentId));
+        }
         log.info("[Tool] deleteEnvironment id={}", environmentId);
         environmentService.delete(environmentId);
         return "Environment " + environmentId + " deleted.";
@@ -294,5 +338,44 @@ public class FlowEngineTools {
                         s.getStepName(),
                         s.getErrorMessage() != null ? s.getErrorMessage() : "HTTP " + s.getStatusCode())));
         return sb.toString();
+    }
+
+    // ── Import guidance ───────────────────────────────────────────────────────
+    // File uploads can't go through the chat API directly — they need multipart form.
+    // These tools tell the user how to use the existing import endpoints.
+
+    @Tool("Tell the user how to import a Postman collection, Swagger/OpenAPI spec, or HAR file into a module as a flow.")
+    public String getImportInstructions(
+            @P("Type of import: 'postman', 'swagger', or 'har'") String importType) {
+        return switch (importType.toLowerCase().trim()) {
+            case "postman" -> """
+                    To import a Postman collection:
+                    POST /import/postman  (multipart/form-data)
+                      - file: your Postman collection JSON file
+                      - moduleId: the ID of the module to import into
+                      - flowName: name for the new flow
+                    Postman {{variables}} are automatically converted to {variables}.
+                    """;
+            case "swagger", "openapi" -> """
+                    To import a Swagger/OpenAPI spec:
+                    POST /import/swagger  (multipart/form-data)
+                      - file: your OpenAPI JSON or YAML file
+                      - moduleId: the ID of the module to import into
+                      - flowName: name for the new flow
+                    Each API operation becomes one step in the flow.
+                    """;
+            case "har" -> """
+                    To import a HAR recording:
+                    POST /import/har  (multipart/form-data)
+                      - file: your HAR file (export from browser DevTools Network tab)
+                      - moduleId: the ID of the module to import into
+                      - flowName: name for the new flow (optional if flowId given)
+                      - flowId: existing flow ID to append steps to (optional)
+                      - filterDomain: only import requests from this domain (optional)
+                    Only XHR/Fetch calls are imported — static assets are filtered out.
+                    How to export HAR: Chrome DevTools → Network tab → right-click → Save all as HAR with content
+                    """;
+            default -> "Supported import types: 'postman', 'swagger', 'har'. Which one do you need?";
+        };
     }
 }
