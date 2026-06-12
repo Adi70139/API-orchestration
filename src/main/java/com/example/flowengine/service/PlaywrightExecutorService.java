@@ -198,7 +198,8 @@ public class PlaywrightExecutorService {
         return result;
     }
 
-    private String dispatch(Page page, AutomationStep action) {
+    /** Package-visible so UIAutomationService can reuse it for iterative generation. */
+    String dispatch(Page page, AutomationStep action) {
         String loc = action.locator;
         String val = action.value;
 
