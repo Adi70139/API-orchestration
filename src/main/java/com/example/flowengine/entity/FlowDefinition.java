@@ -9,8 +9,8 @@ import java.util.List;
 
 @Entity
 @Table(
-    name = "flows",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"name", "module_id"}) // unique per module, not globally
+        name = "flows",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"name", "module_id"}) // unique per module, not globally
 )
 @Data
 public class FlowDefinition {
@@ -23,6 +23,12 @@ public class FlowDefinition {
     private String name;
 
     private String description;
+
+    @Column(length = 10)
+    private String flowType = "API";  // "API" or "UI"
+
+    @Column(columnDefinition = "TEXT")
+    private String playwrightScript;  // stored for UI automation flows
 
     @ManyToOne
     @JoinColumn(name = "module_id")

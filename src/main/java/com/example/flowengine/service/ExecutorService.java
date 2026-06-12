@@ -47,6 +47,7 @@ public class ExecutorService {
     private final EnvironmentService environmentService;
     private final SkipConditionEvaluator skipConditionEvaluator;
     private final MethodExecutorService methodExecutorService;
+    private final PlaywrightExecutorService playwrightExecutorService;
 
     private java.util.concurrent.ExecutorService asyncFlowExecutor;
 
@@ -116,6 +117,29 @@ public class ExecutorService {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
+
+        // UI flows run synchronously in their own thread — Playwright needs a real browser window
+        boolean isUIFlow = !steps.isEmpty() && steps.stream()
+                .allMatch(s -> "UI".equalsIgnoreCase(s.getMethod()));
+        if (isUIFlow) {
+            log.info("[ExecutorService] Async UI flow '{}' — routing to Playwright", flow.getName());
+            FlowExecution flowExecution = createFlowExecution(flow, null, steps);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    playwrightExecutorService.executeUIFlow(flow, steps, flowExecution.getId());
+                } catch (Exception e) {
+                    log.error("Playwright flow {} failed: {}", flowExecution.getId(), e.getMessage(), e);
+                    markFlowFailed(flowExecution.getId(), e.getMessage());
+                }
+            }, asyncFlowExecutor);
+            FlowExecutionStartResponse response = new FlowExecutionStartResponse();
+            response.setFlowExecutionId(flowExecution.getId());
+            response.setFlowId(flow.getId());
+            response.setFlowName(flow.getName());
+            response.setStatus(flowExecution.getStatus());
+            return response;
+        }
+
         FlowExecution flowExecution = createFlowExecution(flow, null, steps);
 
         CompletableFuture.runAsync(() -> {
@@ -156,6 +180,16 @@ public class ExecutorService {
 
     private FlowExecutionResult executeFlow(FlowDefinition flow, ModuleExecution moduleExecution, Long environmentIdOverride) {
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId());
+
+        // If all steps are UI type, delegate entirely to Playwright executor
+        boolean isUIFlow = !steps.isEmpty() && steps.stream()
+                .allMatch(s -> "UI".equalsIgnoreCase(s.getMethod()));
+        if (isUIFlow) {
+            log.info("[ExecutorService] Flow '{}' is a UI automation flow — routing to Playwright", flow.getName());
+            FlowExecution flowExecution = createFlowExecution(flow, moduleExecution, steps);
+            return playwrightExecutorService.executeUIFlow(flow, steps, flowExecution.getId());
+        }
+
         FlowExecution flowExecution = createFlowExecution(flow, moduleExecution, steps);
         return executeExistingFlow(flow.getId(), flowExecution.getId(), environmentIdOverride);
     }
@@ -557,6 +591,24 @@ public class ExecutorService {
                                             Map<Long, String> responsesByStepId,
                                             StepExecution stepExecution) {
         long start = System.currentTimeMillis();
+
+        // UI automation steps are Playwright-only — skip HTTP execution entirely
+        if ("UI".equalsIgnoreCase(step.getMethod())) {
+            stepExecution.setStatusCode(0);
+            stepExecution.setResponseBody("UI automation step — run the Playwright script to execute.");
+            stepExecution.setSuccess(true);
+            stepExecution.setDurationMs(0L);
+            stepExecutionRepository.save(stepExecution);
+
+            StepExecutionResult result = new StepExecutionResult();
+            result.setStepId(step.getId());
+            result.setStepName(step.getName());
+            result.setSuccess(true);
+            result.setStatusCode(0);
+            result.setResponseBody("UI step — Playwright only");
+            result.setDurationMs(0L);
+            return result;
+        }
 
         try {
             String resolvedUrl = PlaceholderUtils.resolve(step.getUrl(), previousResponses);

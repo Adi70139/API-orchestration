@@ -129,6 +129,13 @@
             <version>0.36.0</version>
         </dependency>
 
+        <!-- Playwright — headless browser for UI automation & locator extraction -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.44.0</version>
+        </dependency>
+
         <!-- Loads .env file automatically in local dev -->
         <dependency>
             <groupId>me.paulschwarz</groupId>

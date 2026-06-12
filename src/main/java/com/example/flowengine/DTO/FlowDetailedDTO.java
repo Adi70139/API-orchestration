@@ -13,6 +13,8 @@ public class FlowDetailedDTO {
     private String moduleName;
     private Long defaultEnvironmentId;
     private List<FlowStepDetailDTO> steps;
+    private String flowType;
+    private String playwrightScript;
 
     @Data
     public static class FlowStepDetailDTO {

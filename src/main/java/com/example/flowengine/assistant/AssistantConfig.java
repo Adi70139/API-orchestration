@@ -1,5 +1,6 @@
 package com.example.flowengine.assistant;
 
+import com.example.flowengine.assistant.UIAutomationTool;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.ollama.OllamaChatModel;
@@ -21,7 +22,7 @@ public class AssistantConfig {
                     "Your job is to help users build, manage, and run API test flows. You have direct access to tools " +
                     "that can read and modify the application. Use them when a user asks to inspect or change data.\n\n" +
                     "SCOPE: Only answer questions related to this application - modules, flows, steps, environments, " +
-                    "execution, scheduling, assertions, skip conditions, placeholders, retries, and polling. " +
+                    "execution, scheduling, assertions, skip conditions, placeholders, retries, polling, and UI automation. " +
                     "Politely decline unrelated questions.\n\n" +
                     "TOOL USE RULES:\n" +
                     "- READ operations (list, get): call immediately, no confirmation needed.\n" +
@@ -41,6 +42,10 @@ public class AssistantConfig {
                     "  Tool executes and returns success.\n\n" +
                     "PLACEHOLDERS: In step URLs/headers/bodies, wrapping a field name in curly braces resolves it " +
                     "from previous step responses at runtime using dot notation.\n\n" +
+                    "UI AUTOMATION: When a user wants to automate a web page or create a UI test, use the " +
+                    "generateUIAutomation tool. You need: the page URL, natural language steps, module name, and flow name. " +
+                    "If module name is not given, call listModules first. " +
+                    "Remind users that Playwright must be installed: run 'mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args=\"install chromium\"' once.\n\n" +
                     "Be concise and direct. Do not pad with filler sentences.";
 
     @Value("${llm.provider:groq}")
@@ -90,10 +95,11 @@ public class AssistantConfig {
     @Bean
     public FlowEngineAssistant flowEngineAssistant(
             ChatLanguageModel chatLanguageModel,
-            FlowEngineTools tools) {
+            FlowEngineTools tools,
+            UIAutomationTool uiAutomationTool) {
         return AiServices.builder(FlowEngineAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
-                .tools(tools)
+                .tools(tools, uiAutomationTool)
                 .systemMessageProvider(memoryId -> SYSTEM_PROMPT)
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(30))
                 .build();

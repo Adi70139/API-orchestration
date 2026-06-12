@@ -50,6 +50,11 @@ public class FlowService {
         flow.setName(request.getName());
         flow.setDescription(request.getDescription());
         flow.setModule(module);
+        if (request.getFlowType() != null) flow.setFlowType(request.getFlowType());
+        if (request.getPlaywrightScript() != null) flow.setPlaywrightScript(request.getPlaywrightScript());
+
+        log.info("[FlowService] Creating flow name='{}' type='{}' hasScript={}",
+                flow.getName(), flow.getFlowType(), flow.getPlaywrightScript() != null);
 
         flow = flowRepository.save(flow);
         return mapToFlowDTO(flow);
@@ -212,6 +217,8 @@ public class FlowService {
             dto.setDefaultEnvironmentId(flow.getDefaultEnvironment().getId());
         }
         dto.setStepCount(flow.getSteps() != null ? flow.getSteps().size() : 0);
+        dto.setFlowType(flow.getFlowType() != null ? flow.getFlowType() : "API");
+        dto.setPlaywrightScript(flow.getPlaywrightScript());
         return dto;
     }
 
@@ -220,6 +227,8 @@ public class FlowService {
         dto.setId(flow.getId());
         dto.setName(flow.getName());
         dto.setDescription(flow.getDescription());
+        dto.setFlowType(flow.getFlowType() != null ? flow.getFlowType() : "API");
+        dto.setPlaywrightScript(flow.getPlaywrightScript());
         if (flow.getModule() != null) {
             dto.setModuleId(flow.getModule().getId());
             dto.setModuleName(flow.getModule().getName());

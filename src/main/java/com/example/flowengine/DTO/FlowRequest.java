@@ -14,4 +14,8 @@ public class FlowRequest {
 
     private Long environmentId; // optional — overrides flow's default env
 
+    private String flowType;
+
+    private String PlaywrightScript;
+
 }

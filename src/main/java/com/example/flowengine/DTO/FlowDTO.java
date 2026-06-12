@@ -11,5 +11,7 @@ public class FlowDTO {
     private String moduleName;
     private Long defaultEnvironmentId;
     private Integer stepCount;
+    private String flowType;
+    private String playwrightScript;
 }
 
