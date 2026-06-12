@@ -49,7 +49,7 @@ bulk:
 # LLM — Groq is the default for both local and deployed.
 # Get a free key at https://console.groq.com and set GROQ_API_KEY env var.
 llm:
-  provider: ${LLM_PROVIDER:groq}
+  provider: ${LLM_PROVIDER:ollama}
 
 groq:
   api:
@@ -60,7 +60,7 @@ groq:
 # Requires a tool-calling model: ollama pull llama3.1
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-  model: ${OLLAMA_MODEL:llama3.1}
+  model: ${OLLAMA_MODEL:qwen2.5-coder:1.5b-base}
 
 # UI Automation — Playwright
 # headless=false shows the browser window during scraping/generation (good for local dev)

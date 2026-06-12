@@ -36,6 +36,15 @@ public class UIAutomationService {
     @Value("${ui.automation.headless:false}")
     private boolean headless;
 
+    @Value("${llm.provider:ollama}")
+    private String llmProvider;
+
+    @Value("${ollama.base-url:http://localhost:11434}")
+    private String ollamaBaseUrl;
+
+    @Value("${ollama.model:qwen2.5-coder:1.5b-base}")
+    private String ollamaModel;
+
     @Value("${groq.api.key:}")
     private String groqApiKey;
     @Value("${groq.model:llama-3.3-70b-versatile}")
@@ -94,7 +103,7 @@ public class UIAutomationService {
             flowStepService.create(flow.getId(), stepReq);
         }
 
-        UIAutomationResult result = new UIAutomationResult();
+          UIAutomationResult result = new UIAutomationResult();
         result.setFlowId(flow.getId());
         result.setFlowName(flow.getName());
         result.setModuleName(request.getModuleName());
@@ -116,8 +125,8 @@ public class UIAutomationService {
         try (Playwright playwright = Playwright.create()) {
             BrowserType.LaunchOptions opts = new BrowserType.LaunchOptions().setHeadless(headless);
             try (Browser browser = playwright.chromium().launch(opts)) {
-                BrowserContext ctx = browser.newContext();
-
+                BrowserContext ctx = browser.newContext(new Browser.NewContextOptions()
+                        .setIgnoreHTTPSErrors(true));
                 // Handle auth cookies if provided
                 if (request.getCookiesJson() != null && !request.getCookiesJson().isBlank()) {
                     try {
@@ -301,7 +310,9 @@ public class UIAutomationService {
                 - For assertURL, always set "locator" to null and "value" to the expected URL fragment.
                 """.formatted(url, elementList, naturalLanguageSteps);
 
-        String responseJson = callGroq(prompt);
+        String responseJson = "groq".equalsIgnoreCase(llmProvider)
+                ? callGroq(prompt)
+                : callOllama(prompt);
 
         // Parse and return
         return objectMapper.readValue(responseJson, new TypeReference<>() {});
@@ -338,6 +349,31 @@ public class UIAutomationService {
         // Strip markdown fences if model wrapped in them anyway
         content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
 
+        log.info("[UIAutomation] LLM response: {}", content.substring(0, Math.min(200, content.length())));
+        return content;
+    }
+
+    private String callOllama(String prompt) throws Exception {
+        String requestBody = objectMapper.writeValueAsString(Map.of(
+                "model", ollamaModel,
+                "prompt", prompt,
+                "stream", false
+        ));
+
+        var http = java.net.http.HttpClient.newHttpClient();
+        var req = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(ollamaBaseUrl + "/api/generate"))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+
+        var resp = http.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) {
+            throw new RuntimeException("Ollama API error " + resp.statusCode() + ": " + resp.body());
+        }
+
+        String content = objectMapper.readTree(resp.body()).path("response").asText();
+        content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
         log.info("[UIAutomation] LLM response: {}", content.substring(0, Math.min(200, content.length())));
         return content;
     }
