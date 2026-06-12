@@ -6,8 +6,6 @@ COPY . .
 
 RUN chmod +x mvnw
 
-RUN ./mvnw clean package -DskipTests
-
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libnss3 \
@@ -29,7 +27,10 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libpango-1.0-0 \
     libcairo2 \
-    libasound2
+    libasound2t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ./mvnw clean package -DskipTests
 
 EXPOSE 8060
 
