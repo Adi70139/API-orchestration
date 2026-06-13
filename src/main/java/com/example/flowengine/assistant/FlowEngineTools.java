@@ -24,11 +24,27 @@ public class FlowEngineTools {
     private static final String CONFIRM_MSG =
             "NEEDS_CONFIRMATION: %s. Reply 'yes' or 'confirm' to proceed.";
 
+    /**
+     * Lenient parsing for the 'confirmed' parameter.
+     * Some LLMs format boolean tool arguments as "<true>"/"<false>" or with extra
+     * whitespace/quotes instead of plain true/false. This normalizes all of that.
+     */
+    private boolean isConfirmed(String confirmed) {
+        if (confirmed == null) return false;
+        String normalized = confirmed.trim()
+                .replaceAll("[<>\"']", "")
+                .trim()
+                .toLowerCase();
+        return normalized.equals("true") || normalized.equals("yes") || normalized.equals("1");
+    }
+
     private final ModuleService moduleService;
     private final FlowService flowService;
     private final FlowStepService flowStepService;
     private final EnvironmentService environmentService;
     private final ExecutorService executorService;
+    private final TrendService trendService;
+    private final ScheduleResultService scheduleResultService;
 
     // ── Modules ──────────────────────────────────────────────────────────────
 
@@ -62,8 +78,8 @@ public class FlowEngineTools {
             @P("ID of the module to update") Long moduleId,
             @P("New name for the module") String name,
             @P("New description for the module") String description,
-            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this update") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Update module [id=%d] — set name='%s', description='%s'",
                             moduleId, name, description));
@@ -79,8 +95,8 @@ public class FlowEngineTools {
     @Tool("Delete a module and all its flows and steps. Requires user confirmation before executing.")
     public String deleteModule(
             @P("ID of the module to delete") Long moduleId,
-            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this deletion") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Delete module [id=%d] — this will also delete all its flows and steps", moduleId));
         }
@@ -102,8 +118,13 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Get full details of a single flow including its steps.")
-    public String getFlow(@P("ID of the flow") Long flowId) {
+    @Tool("""
+            Get the STRUCTURE of a flow: its list of steps with HTTP methods and URLs.
+            Use this ONLY when the user asks what a flow contains, what steps it has, or how it's built.
+            Do NOT use this for questions about history, runs, performance, trends, or dependencies —
+            use getFlowHistory, getStepTrends, or getDependencyGraph for those instead.
+            """)
+    public String getFlow(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
         log.info("[Tool] getFlow id={}", flowId);
         var flow = flowService.getById(flowId);
         StringBuilder sb = new StringBuilder(String.format(
@@ -118,7 +139,12 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Create a new flow inside a module.")
+    @Tool("""
+            Create a NEW EMPTY flow from scratch with no steps.
+            Trigger phrases: "create a new flow", "make a flow called X", "add a flow for Y".
+            NOT for: "copy", "duplicate", "clone" an existing flow — use duplicateFlow for those,
+            since this tool creates an empty flow with zero steps.
+            """)
     public String createFlow(
             @P("Name for the new flow") String name,
             @P("Name of the module this flow belongs to") String moduleName,
@@ -138,8 +164,8 @@ public class FlowEngineTools {
             @P("New name for the flow") String name,
             @P("New description") String description,
             @P("Module name (required even if unchanged)") String moduleName,
-            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this update") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Update flow [id=%d] — set name='%s'", flowId, name));
         }
@@ -155,8 +181,8 @@ public class FlowEngineTools {
     @Tool("Delete a flow by its ID. Requires user confirmation before executing.")
     public String deleteFlow(
             @P("ID of the flow to delete") Long flowId,
-            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this deletion") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Delete flow [id=%d] — this will also delete all its steps", flowId));
         }
@@ -165,7 +191,13 @@ public class FlowEngineTools {
         return "Flow " + flowId + " deleted.";
     }
 
-    @Tool("Duplicate an existing flow, optionally giving it a new name.")
+    @Tool("""
+            Create a COPY of an existing flow, including all its steps, in the same module.
+            Trigger phrases: "copy", "duplicate", "clone", "make a copy of", "create a copy of X flow".
+            Requires the ID of the EXISTING flow to copy — if the user names it, call listFlows first
+            to find that flow's id.
+            NOT for creating a brand-new empty flow — use createFlow for that.
+            """)
     public String duplicateFlow(
             @P("ID of the flow to duplicate") Long flowId,
             @P("Optional name for the duplicated flow") String newName) {
@@ -179,7 +211,7 @@ public class FlowEngineTools {
     // ── Steps ─────────────────────────────────────────────────────────────────
 
     @Tool("List all steps in a flow, ordered by stepOrder.")
-    public String listSteps(@P("ID of the flow") Long flowId) {
+    public String listSteps(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
         log.info("[Tool] listSteps flowId={}", flowId);
         var steps = flowStepService.getByFlowId(flowId);
         if (steps.isEmpty()) return "No steps found in flow " + flowId;
@@ -189,7 +221,10 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Create a new HTTP step in a flow.")
+    @Tool("""
+            Create a NEW step from scratch with a method/URL you specify.
+            NOT for "copy this step" / "duplicate this step" — use duplicateStep for those.
+            """)
     public String createStep(
             @P("ID of the flow to add the step to") Long flowId,
             @P("Name of the step") String name,
@@ -220,8 +255,8 @@ public class FlowEngineTools {
             @P("Optional description") String description,
             @P("Optional JSON string for request headers") String headersJson,
             @P("Optional JSON string for request body") String bodyJson,
-            @P("Set to true only after the user has explicitly confirmed this update") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this update") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Update step [id=%d] — set name='%s', method=%s, url='%s'",
                             stepId, name, method, url));
@@ -241,8 +276,8 @@ public class FlowEngineTools {
     @Tool("Delete a step by its ID. Requires user confirmation before executing.")
     public String deleteStep(
             @P("ID of the step to delete") Long stepId,
-            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this deletion") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Delete step [id=%d]", stepId));
         }
@@ -251,7 +286,10 @@ public class FlowEngineTools {
         return "Step " + stepId + " deleted.";
     }
 
-    @Tool("Duplicate a step within a flow.")
+    @Tool("""
+            Create a COPY of an existing step (same method/URL/headers/body) within the same flow.
+            Trigger phrases: "copy this step", "duplicate step", "clone step".
+            """)
     public String duplicateStep(
             @P("ID of the flow containing the step") Long flowId,
             @P("ID of the step to duplicate") Long stepId,
@@ -289,8 +327,8 @@ public class FlowEngineTools {
     @Tool("Delete an environment by its ID. Requires user confirmation before executing.")
     public String deleteEnvironment(
             @P("ID of the environment to delete") Long environmentId,
-            @P("Set to true only after the user has explicitly confirmed this deletion") boolean confirmed) {
-        if (!confirmed) {
+            @P("Pass exactly \"true\" or \"false\" (no extra characters). Set to \"true\" only after the user has explicitly confirmed this deletion") String confirmed) {
+        if (!isConfirmed(confirmed)) {
             return String.format(CONFIRM_MSG,
                     String.format("Delete environment [id=%d]", environmentId));
         }
@@ -340,7 +378,167 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    // ── Import guidance ───────────────────────────────────────────────────────
+    // ── Analytics, History, Dependencies ────────────────────────────────────
+
+    @Tool("""
+            Get RUN HISTORY for a flow: pass rate, average duration, fail streaks, trend
+            (improving/degrading/stable), and a list of RECENT RUNS with timestamps and results.
+            Trigger phrases: "history", "recent runs", "how has it been performing", "past executions",
+            "pass rate", "is it failing".
+            ALWAYS call this again (do not reuse a previous answer) if the user asks for history/runs
+            again — re-fetch fresh data every time.
+            NOT for: flow structure/steps (use getFlow), per-step reliability (use getStepTrends),
+            data dependencies between steps (use getDependencyGraph).
+            """)
+    public String getFlowHistory(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        log.info("[Tool] getFlowHistory flowId={}", flowId);
+        var history = trendService.getFlowHistory(flowId);
+
+        if (history.getTotalRuns() == 0) {
+            return String.format("Flow '%s' [id=%d] has no execution history yet.",
+                    history.getFlowName(), history.getFlowId());
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("Flow '%s' [id=%d] — %d total runs\n\n",
+                history.getFlowName(), history.getFlowId(), history.getTotalRuns()));
+
+        var trend = history.getTrend();
+        if (trend != null) {
+            sb.append(String.format(
+                    "Pass rate: %.1f%% | Avg duration: %dms | Trend: %s\n",
+                    trend.getPassRatePercent(), trend.getAvgDurationMs(), trend.getTrend()));
+            sb.append(String.format(
+                    "Current fail streak: %d | Longest fail streak: %d\n\n",
+                    trend.getCurrentFailStreak(), trend.getLongestFailStreak()));
+        }
+
+        sb.append("Recent runs (newest first):\n");
+        history.getRuns().stream().limit(10).forEach(run -> {
+            sb.append(String.format("  - [exec=%d] %s | started %s | %dms",
+                    run.getExecutionId(), run.getStatus(), run.getStartedAt(),
+                    run.getDurationMs() != null ? run.getDurationMs() : 0));
+            if (!"PASS".equalsIgnoreCase(run.getStatus()) && run.getSteps() != null) {
+                run.getSteps().stream().filter(s -> !s.isSuccess()).findFirst()
+                        .ifPresent(failedStep -> sb.append(String.format(
+                                " — failed at step '%s': %s",
+                                failedStep.getStepName(),
+                                failedStep.getErrorMessage() != null ? failedStep.getErrorMessage() : "HTTP " + failedStep.getStatusCode())));
+            }
+            sb.append("\n");
+        });
+
+        return sb.toString();
+    }
+
+    @Tool("""
+            Get PER-STEP reliability stats for a flow: which individual steps are flaky, slow,
+            or currently failing — with pass rate and min/avg/max duration per step.
+            Trigger phrases: "which step is flaky", "which step is slow", "step trends",
+            "is any step unreliable".
+            NOT for: overall flow run history (use getFlowHistory), flow structure (use getFlow),
+            data dependencies (use getDependencyGraph).
+            """)
+    public String getStepTrends(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        log.info("[Tool] getStepTrends flowId={}", flowId);
+        var trends = trendService.getStepTrends(flowId);
+
+        if (trends.isEmpty()) {
+            return "No step trend data available for flow " + flowId + " yet.";
+        }
+
+        StringBuilder sb = new StringBuilder(String.format("Step trends for flow %d:\n\n", flowId));
+        trends.forEach(t -> {
+            sb.append(String.format("Step %d: '%s' [id=%d]\n", t.getStepOrder(), t.getStepName(), t.getStepId()));
+            sb.append(String.format("  Pass rate: %.1f%% (%d/%d runs) | Avg: %dms (min %dms, max %dms)\n",
+                    t.getPassRatePercent(), t.getPassCount(), t.getTotalRuns(),
+                    t.getAvgDurationMs(), t.getMinDurationMs(), t.getMaxDurationMs()));
+            if (t.isFlaky()) {
+                sb.append("  ⚠ FLAKY — pass rate between 20-80%, unreliable\n");
+            }
+            if (t.getCurrentFailStreak() > 0) {
+                sb.append(String.format("  Currently failing — %d consecutive failures\n", t.getCurrentFailStreak()));
+            }
+            if (t.getMostCommonError() != null) {
+                sb.append(String.format("  Most common error: %s\n", t.getMostCommonError()));
+            }
+            sb.append("\n");
+        });
+
+        return sb.toString();
+    }
+
+    @Tool("""
+            Show how steps DEPEND ON EACH OTHER via {placeholder} data — which step produces a value
+            and which later step consumes it.
+            Trigger phrases: "dependency", "dependencies", "how are the steps connected",
+            "what data does step X depend on", "which steps pass data to each other".
+            NOT for: run history (use getFlowHistory), step reliability/flakiness (use getStepTrends),
+            flow structure/step list (use getFlow).
+            """)
+    public String getDependencyGraph(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        log.info("[Tool] getDependencyGraph flowId={}", flowId);
+        var graph = trendService.getDependencyGraph(flowId);
+
+        if (graph.getNodes() == null || graph.getNodes().isEmpty()) {
+            return "No steps found in flow " + flowId;
+        }
+
+        StringBuilder sb = new StringBuilder(String.format("Dependency graph for flow '%s' [id=%d]:\n\n",
+                graph.getFlowName(), graph.getFlowId()));
+
+        sb.append("Steps:\n");
+        graph.getNodes().forEach(n -> {
+            sb.append(String.format("  %d. [id=%d] %s — %s %s\n",
+                    n.getStepOrder(), n.getStepId(), n.getStepName(), n.getMethod(), n.getUrl()));
+            if (n.getUsedPlaceholders() != null && !n.getUsedPlaceholders().isEmpty()) {
+                sb.append(String.format("     uses: %s\n", n.getUsedPlaceholders()));
+            }
+            if (n.getProducedKeys() != null && !n.getProducedKeys().isEmpty()) {
+                sb.append(String.format("     produces: %s\n", n.getProducedKeys()));
+            }
+        });
+
+        if (graph.getEdges() != null && !graph.getEdges().isEmpty()) {
+            sb.append("\nDependencies:\n");
+            graph.getEdges().forEach(e -> sb.append(String.format(
+                    "  '%s' → '%s' via %s\n", e.getFromStepName(), e.getToStepName(), e.getKeys())));
+        } else {
+            sb.append("\nNo cross-step dependencies detected — steps are independent.\n");
+        }
+
+        return sb.toString();
+    }
+
+    @Tool("""
+            Get run history for a module — list of past execution runs with status,
+            timing, and which flows passed/failed in each run. Use this when the user
+            asks about a module's run history or recent executions.
+            """)
+    public String getModuleRunHistory(
+            @P("ID of the module") Long moduleId,
+            @P("Number of recent runs to show, default 10") Integer limit) {
+        log.info("[Tool] getModuleRunHistory moduleId={}", moduleId);
+        int size = (limit != null && limit > 0) ? Math.min(limit, 50) : 10;
+        var page = scheduleResultService.getRunHistory(moduleId, 0, size);
+
+        if (page.isEmpty()) {
+            return "No run history found for module " + moduleId;
+        }
+
+        StringBuilder sb = new StringBuilder(String.format(
+                "Run history for module %d (showing %d of %d total):\n\n",
+                moduleId, page.getNumberOfElements(), page.getTotalElements()));
+
+        page.getContent().forEach(run -> sb.append(String.format(
+                "  - [exec=%d] %s | started %s | finished %s\n",
+                run.getExecutionId(), run.getStatus(), run.getStartedAt(),
+                run.getFinishedAt() != null ? run.getFinishedAt() : "in progress")));
+
+        return sb.toString();
+    }
+
+
     // File uploads can't go through the chat API directly — they need multipart form.
     // These tools tell the user how to use the existing import endpoints.
 

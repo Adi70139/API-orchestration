@@ -60,7 +60,7 @@ groq:
 # Requires a tool-calling model: ollama pull llama3.1
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-  model: ${OLLAMA_MODEL:qwen2.5-coder:1.5b-base}
+  model: ${OLLAMA_MODEL:qwen2.5:7b}
 
 # UI Automation — Playwright
 # headless=false shows the browser window during scraping/generation (good for local dev)

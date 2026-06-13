@@ -284,6 +284,61 @@ public class PlaywrightExecutorService {
         if (locatorStr == null || locatorStr.isBlank())
             throw new IllegalArgumentException("Locator is null or blank");
 
+        // Handle compact notation formats: "getByRole: button {name: \"Log In\"}"
+        if (locatorStr.contains(":") && !locatorStr.contains(":\"") && !locatorStr.startsWith("http")) {
+            // Likely compact notation like "getByRole: button" or "getByLabel: Email"
+            String[] parts = locatorStr.split(":", 2);
+            if (parts.length == 2) {
+                String method = parts[0].trim();
+                String rest = parts[1].trim();
+
+                switch (method) {
+                    case "getByRole" -> {
+                        return parseCompactGetByRole(page, locatorStr);
+                    }
+                    case "getByLabel" -> {
+                        if (rest.startsWith("{")) {
+                            // Extract from braces
+                            int start = rest.indexOf('"');
+                            int end = rest.lastIndexOf('"');
+                            if (start >= 0 && end > start) {
+                                String label = rest.substring(start + 1, end);
+                                return page.getByLabel(label);
+                            }
+                        } else {
+                            // Simple format like "getByLabel: Email"
+                            return page.getByLabel(rest.replace("\"", ""));
+                        }
+                    }
+                    case "getByPlaceholder" -> {
+                        if (rest.startsWith("{")) {
+                            int start = rest.indexOf('"');
+                            int end = rest.lastIndexOf('"');
+                            if (start >= 0 && end > start) {
+                                String placeholder = rest.substring(start + 1, end);
+                                return page.getByPlaceholder(placeholder);
+                            }
+                        } else {
+                            return page.getByPlaceholder(rest.replace("\"", ""));
+                        }
+                    }
+                    case "getByText" -> {
+                        if (rest.startsWith("{")) {
+                            int start = rest.indexOf('"');
+                            int end = rest.lastIndexOf('"');
+                            if (start >= 0 && end > start) {
+                                String text = rest.substring(start + 1, end);
+                                return page.getByText(text, new Page.GetByTextOptions().setExact(true)).first();
+                            }
+                        } else {
+                            return page.getByText(rest.replace("\"", ""), new Page.GetByTextOptions().setExact(true)).first();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Original function-call notation support
         if (locatorStr.startsWith("getByTestId("))
             return page.getByTestId(extractFirstQuoted(locatorStr));
 
@@ -315,6 +370,32 @@ public class PlaywrightExecutorService {
 
         // Raw CSS/XPath fallback
         return page.locator(locatorStr);
+    }
+
+    private Locator parseCompactGetByRole(Page page, String compactNotation) {
+        // Format: "getByRole: button {name: \"Log In\"}"
+        // Extract role and name if present
+        String afterColon = compactNotation.substring("getByRole:".length()).trim();
+
+        int braceIdx = afterColon.indexOf('{');
+        String role = (braceIdx >= 0 ? afterColon.substring(0, braceIdx) : afterColon).trim();
+
+        if (braceIdx >= 0 && afterColon.contains("name:")) {
+            String bracedPart = afterColon.substring(braceIdx);
+            int nameStart = bracedPart.indexOf("name:");
+            if (nameStart >= 0) {
+                String afterName = bracedPart.substring(nameStart + 5).trim();
+                int quoteStart = afterName.indexOf('"');
+                int quoteEnd = afterName.lastIndexOf('"');
+                if (quoteStart >= 0 && quoteEnd > quoteStart) {
+                    String name = afterName.substring(quoteStart + 1, quoteEnd);
+                    return page.getByRole(ariaRole(role),
+                            new Page.GetByRoleOptions().setName(name).setExact(false));
+                }
+            }
+        }
+
+        return page.getByRole(ariaRole(role));
     }
 
     private String extractFirstQuoted(String s) {
