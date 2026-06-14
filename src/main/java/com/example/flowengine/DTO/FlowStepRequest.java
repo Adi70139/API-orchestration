@@ -25,6 +25,16 @@ public class FlowStepRequest {
 
     private String bodyJson;
 
+    // Alternate payload variants for this same endpoint, e.g. captured from HAR/Postman
+    // import when the same method+URL was hit with different bodies.
+    private List<PayloadVariant> payloadVariants;
+
+    @Data
+    public static class PayloadVariant {
+        private String name;     // human-readable label, e.g. "Variant 1" or derived from body
+        private String bodyJson; // the alternate request body
+    }
+
     // Build this step's request body from a previous step's response body.
     // bodyJson is deep-merged on top as overrides/new fields.
     private Boolean inheritBodyFromPreviousStep;

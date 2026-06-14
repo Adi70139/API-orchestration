@@ -85,9 +85,14 @@ public class HarImportService {
         int stepOrder = flowStepRepository.findByFlowIdOrderByStepOrder(flow.getId()).stream()
                 .mapToInt(FlowStep::getStepOrder).max().orElse(0) + 1;
 
-        int created = 0, skipped = 0;
-        // Track fingerprints to deduplicate identical requests
-        Set<String> seenFingerprints = new LinkedHashSet<>();
+        int created = 0, skipped = 0, variantsAdded = 0;
+        // Maps "METHOD|cleanUrl" -> the FlowStep already created for that endpoint in this import.
+        // Used to attach additional distinct bodies as payload variants instead of
+        // creating duplicate steps for the same endpoint.
+        Map<String, FlowStep> endpointSteps = new LinkedHashMap<>();
+        // Tracks normalized bodies already stored (as active body or variant) per endpoint,
+        // so byte-identical repeats are still skipped entirely.
+        Map<String, Set<String>> endpointBodies = new HashMap<>();
 
         for (JsonNode entry : entries) {
             JsonNode req = entry.path("request");
@@ -109,19 +114,45 @@ public class HarImportService {
                 }
             }
 
-            // Deduplication — build fingerprint from method + cleaned URL + normalized body
             String rawBody = req.path("postData").path("text").asText("").trim();
-            String fingerprint = method + "|" + cleanUrl(url) + "|" + normalizeBody(rawBody);
-            if (!seenFingerprints.add(fingerprint)) {
+            String normalizedBody = normalizeBody(rawBody);
+            String endpointKey = method + "|" + cleanUrl(url);
+
+            Set<String> seenBodies = endpointBodies.computeIfAbsent(endpointKey, k -> new LinkedHashSet<>());
+
+            if (!seenBodies.add(normalizedBody)) {
+                // Exact same endpoint + same body already captured — true duplicate
                 log.debug("Skipping duplicate: {} {}", method, url);
                 skipped++;
+                continue;
+            }
+
+            FlowStep existingStep = endpointSteps.get(endpointKey);
+            if (existingStep != null) {
+                // Same endpoint, different body — attach as a payload variant
+                // rather than creating a separate step.
+                try {
+                    addPayloadVariant(existingStep, rawBody, seenBodies.size());
+                    log.info("[HAR] Updating step id={} payloadVariantsJson length={}",
+                            existingStep.getId(),
+                            existingStep.getPayloadVariantsJson() != null
+                                    ? existingStep.getPayloadVariantsJson().length() : 0);
+                    flowStepRepository.updatePayloadVariants(
+                            existingStep.getId(),
+                            existingStep.getPayloadVariantsJson());
+                    variantsAdded++;
+                } catch (Exception e) {
+                    log.warn("Failed to add payload variant for '{}' — {}", url, e.getMessage());
+                    skipped++;
+                }
                 continue;
             }
 
             try {
                 FlowStep step = buildStep(entry, req, headers, flow, stepOrder,
                         request.isIncludeResponseAsLastResponse());
-                flowStepRepository.save(step);
+                FlowStep saved = flowStepRepository.saveAndFlush(step); // flush ensures id is assigned
+                endpointSteps.put(endpointKey, saved);
                 stepOrder++;
                 created++;
             } catch (Exception e) {
@@ -130,7 +161,8 @@ public class HarImportService {
             }
         }
 
-        log.info("HAR import complete — {} steps created, {} entries skipped (incl. duplicates)", created, skipped);
+        log.info("HAR import complete — {} steps created, {} payload variants added, {} entries skipped (incl. duplicates)",
+                created, variantsAdded, skipped);
 
         if (created == 0) {
             throw new IllegalArgumentException(
@@ -263,6 +295,46 @@ public class HarImportService {
     }
 
     // ─── Step builder ─────────────────────────────────────────────────────────
+
+    /**
+     * Attaches an additional request body as a payload variant on an already-created step
+     * for the same endpoint. The step's existing bodyJson (or its first variant) is
+     * preserved as the active/default payload; this new body is appended as a
+     * selectable alternative the user can pick or edit in the UI.
+     */
+    private void addPayloadVariant(FlowStep step, String rawBody, int variantIndex) throws Exception {
+        String bodyJson;
+        try {
+            JsonNode parsed = objectMapper.readTree(rawBody.isBlank() ? "{}" : rawBody);
+            bodyJson = objectMapper.writeValueAsString(parsed);
+        } catch (Exception e) {
+            bodyJson = rawBody;
+        }
+
+        List<com.example.flowengine.DTO.FlowStepRequest.PayloadVariant> variants;
+        if (step.getPayloadVariantsJson() != null && !step.getPayloadVariantsJson().isBlank()) {
+            variants = new ArrayList<>(objectMapper.readValue(
+                    step.getPayloadVariantsJson(),
+                    new com.fasterxml.jackson.core.type.TypeReference<List<com.example.flowengine.DTO.FlowStepRequest.PayloadVariant>>() {}));
+        } else {
+            // First time adding a variant — seed it with the step's current active body too,
+            // so all payloads (default + alternates) are visible together for the user to pick from.
+            variants = new ArrayList<>();
+            if (step.getBodyJson() != null && !step.getBodyJson().isBlank()) {
+                var defaultVariant = new com.example.flowengine.DTO.FlowStepRequest.PayloadVariant();
+                defaultVariant.setName("Variant 1 (default)");
+                defaultVariant.setBodyJson(step.getBodyJson());
+                variants.add(defaultVariant);
+            }
+        }
+
+        var newVariant = new com.example.flowengine.DTO.FlowStepRequest.PayloadVariant();
+        newVariant.setName("Variant " + (variants.size() + 1));
+        newVariant.setBodyJson(bodyJson);
+        variants.add(newVariant);
+
+        step.setPayloadVariantsJson(objectMapper.writeValueAsString(variants));
+    }
 
     private FlowStep buildStep(JsonNode entry, JsonNode req, Map<String, String> headers,
                                FlowDefinition flow, int stepOrder, boolean captureResponse) throws Exception {

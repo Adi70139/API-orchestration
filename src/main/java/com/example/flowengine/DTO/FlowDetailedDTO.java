@@ -11,10 +11,10 @@ public class FlowDetailedDTO {
     private String description;
     private Long moduleId;
     private String moduleName;
-    private Long defaultEnvironmentId;
-    private List<FlowStepDetailDTO> steps;
     private String flowType;
     private String playwrightScript;
+    private Long defaultEnvironmentId;
+    private List<FlowStepDetailDTO> steps;
 
     @Data
     public static class FlowStepDetailDTO {
@@ -27,6 +27,7 @@ public class FlowDetailedDTO {
         private String headersJson;
         private String bodyJson;
         private Long bodySourceStepId;
+        private List<FlowStepRequest.PayloadVariant> payloadVariants;
         private AssertionsDTO assertions;
         private FlowStepRequest.SkipConditionRequest skipCondition; // null if no skip condition
     }

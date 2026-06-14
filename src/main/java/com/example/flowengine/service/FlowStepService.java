@@ -9,6 +9,7 @@ import com.example.flowengine.repository.FlowRepository;
 import com.example.flowengine.repository.FlowStepRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FlowStepService {
@@ -48,6 +50,7 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
+        mapPayloadVariants(step, request);
         mapBodySource(step, request, flowId, maxOrder + 1);
         mapRetryConfig(step, request);
         mapAssertions(step, request);
@@ -75,6 +78,7 @@ public class FlowStepService {
         step.setUrl(request.getUrl());
         step.setHeadersJson(request.getHeadersJson());
         step.setBodyJson(request.getBodyJson());
+        mapPayloadVariants(step, request);
         mapBodySource(step, request, step.getFlow().getId(), step.getStepOrder());
         mapRetryConfig(step, request);
         mapAssertions(step, request);
@@ -154,6 +158,7 @@ public class FlowStepService {
         duplicate.setUrl(original.getUrl());
         duplicate.setHeadersJson(original.getHeadersJson());
         duplicate.setBodyJson(original.getBodyJson());
+        duplicate.setPayloadVariantsJson(original.getPayloadVariantsJson());
         duplicate.setBodySourceStepId(original.getBodySourceStepId());
         duplicate.setAssertionsJson(original.getAssertionsJson());
         duplicate.setRetryCount(original.getRetryCount());
@@ -176,6 +181,30 @@ public class FlowStepService {
                             + dependentStepIds);
         }
         flowStepRepository.deleteById(stepId);
+    }
+
+    /**
+     * Serializes payloadVariants from the request into payload_variants_json.
+     * If payloadVariants is null in the request (frontend didn't send it),
+     * the existing DB value is preserved — variants are never wiped by a
+     * standard step edit that doesn't touch the variants list.
+     * Only an explicit empty list [] clears the variants intentionally.
+     */
+    private void mapPayloadVariants(FlowStep step, FlowStepRequest request) {
+        if (request.getPayloadVariants() == null) {
+            // null = not provided in request — preserve whatever is already stored
+            return;
+        }
+        if (request.getPayloadVariants().isEmpty()) {
+            // explicit empty list = user cleared all variants intentionally
+            step.setPayloadVariantsJson(null);
+            return;
+        }
+        try {
+            step.setPayloadVariantsJson(objectMapper.writeValueAsString(request.getPayloadVariants()));
+        } catch (Exception e) {
+            log.warn("Failed to serialize payloadVariants for step '{}': {}", step.getName(), e.getMessage());
+        }
     }
 
     private void mapBodySource(FlowStep step, FlowStepRequest request, Long flowId, Integer stepOrder) {

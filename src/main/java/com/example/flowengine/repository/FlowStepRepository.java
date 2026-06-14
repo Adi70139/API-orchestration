@@ -1,9 +1,10 @@
-
 package com.example.flowengine.repository;
 
 import com.example.flowengine.entity.FlowStep;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -17,4 +18,10 @@ public interface FlowStepRepository extends JpaRepository<FlowStep, Long> {
        WHERE fs.flow.id = :flowId
        """)
     Integer findMaxStepOrderByFlowId(Long flowId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE flow_steps SET payload_variants_json = :variants WHERE id = :id",
+            nativeQuery = true)
+    void updatePayloadVariants(@Param("id") Long id,
+                               @Param("variants") String variants);
 }

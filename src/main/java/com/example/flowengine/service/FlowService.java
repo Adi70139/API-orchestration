@@ -250,6 +250,17 @@ public class FlowService {
                         stepDTO.setBodyJson(step.getBodyJson());
                         stepDTO.setBodySourceStepId(step.getBodySourceStepId());
 
+                        // Deserialize payloadVariantsJson into structured list
+                        if (step.getPayloadVariantsJson() != null && !step.getPayloadVariantsJson().isBlank()) {
+                            try {
+                                stepDTO.setPayloadVariants(objectMapper.readValue(
+                                        step.getPayloadVariantsJson(),
+                                        new com.fasterxml.jackson.core.type.TypeReference<java.util.List<FlowStepRequest.PayloadVariant>>() {}));
+                            } catch (Exception e) {
+                                log.warn("Failed to parse payloadVariantsJson for step {}: {}", step.getId(), e.getMessage());
+                            }
+                        }
+
                         // Deserialize assertionsJson into structured object
                         if (step.getAssertionsJson() != null) {
                             try {

@@ -1,10 +1,15 @@
 package com.example.flowengine.entity;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.flowengine.DTO.FlowStepRequest;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import java.util.List;
 
 @Entity
 @Table(name = "flow_steps")
@@ -42,6 +47,31 @@ public class FlowStep {
 
     @Column(name = "body_source_step_id")
     private Long bodySourceStepId;
+
+    /**
+     * Alternate request body variants for the same method+URL, captured during
+     * HAR/Postman import when multiple distinct payloads hit the same endpoint.
+     * JSON array: [{"name": "...", "bodyJson": "..."}]. bodyJson on this step
+     * remains the active/default payload (the first variant).
+     */
+    @JsonIgnore
+    @Column(name = "payload_variants_json", columnDefinition = "TEXT")
+    private String payloadVariantsJson;
+
+    /**
+     * Deserialized payload variants — computed from payloadVariantsJson for JSON serialization.
+     * Returned by the API so the frontend gets a proper list, not a raw JSON string.
+     */
+    @Transient
+    public List<FlowStepRequest.PayloadVariant> getPayloadVariants() {
+        if (payloadVariantsJson == null || payloadVariantsJson.isBlank()) return null;
+        try {
+            return new ObjectMapper().readValue(payloadVariantsJson,
+                    new TypeReference<List<FlowStepRequest.PayloadVariant>>() {});
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     // Assertions evaluated at execution time — saved explicitly by user
     @Column(columnDefinition = "TEXT")
