@@ -37,8 +37,8 @@ public class SecurityConfig {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
 
-    @Value("${spring.security.oauth2.client.registration.google.client-id:}")
-    private String googleClientId;
+    @Value("${app.frontend-url:http://localhost:5173}")
+    private String frontendUrl;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -55,44 +55,47 @@ public class SecurityConfig {
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
-        // Only configure Google OAuth2 if credentials are actually set
-        if (googleClientId != null && !googleClientId.isBlank()) {
-            http.oauth2Login(oauth -> oauth
-                    .successHandler((request, response, authentication) -> {
-                        OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
-                        String email = oAuth2User.getAttribute("email");
-                        String name  = oAuth2User.getAttribute("name");
-                        String sub   = oAuth2User.getAttribute("sub");
+        http.oauth2Login(oauth -> oauth
+                .successHandler((request, response, authentication) -> {
+                    OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
+                    String email = oAuth2User.getAttribute("email");
+                    String name  = oAuth2User.getAttribute("name");
+                    String sub   = oAuth2User.getAttribute("sub");
 
-                        User user = userRepository
-                                .findByProviderAndProviderId(User.Provider.GOOGLE, sub)
-                                .orElseGet(() -> {
-                                    if (userRepository.existsByEmail(email)) {
-                                        return userRepository.findByEmail(email).map(u -> {
-                                            u.setProvider(User.Provider.GOOGLE);
-                                            u.setProviderId(sub);
-                                            return userRepository.save(u);
-                                        }).orElseThrow();
-                                    }
-                                    User newUser = new User();
-                                    newUser.setEmail(email);
-                                    newUser.setName(name);
-                                    newUser.setProvider(User.Provider.GOOGLE);
-                                    newUser.setProviderId(sub);
-                                    newUser.setRole(User.Role.USER);
-                                    newUser.setCreatedAt(LocalDateTime.now());
-                                    return userRepository.save(newUser);
-                                });
+                    User user = userRepository
+                            .findByProviderAndProviderId(User.Provider.GOOGLE, sub)
+                            .orElseGet(() -> {
+                                if (userRepository.existsByEmail(email)) {
+                                    return userRepository.findByEmail(email).map(u -> {
+                                        u.setProvider(User.Provider.GOOGLE);
+                                        u.setProviderId(sub);
+                                        return userRepository.save(u);
+                                    }).orElseThrow();
+                                }
+                                User newUser = new User();
+                                newUser.setEmail(email);
+                                newUser.setName(name);
+                                newUser.setProvider(User.Provider.GOOGLE);
+                                newUser.setProviderId(sub);
+                                newUser.setRole(User.Role.USER);
+                                newUser.setCreatedAt(LocalDateTime.now());
+                                return userRepository.save(newUser);
+                            });
 
-                        String token = jwtUtil.generate(user);
-                        String redirectTo = request.getParameter("state") != null
-                                ? request.getParameter("state") : "/";
-                        response.sendRedirect(redirectTo + "?token=" + token);
-                    })
-                    .failureHandler((request, response, ex) ->
-                            response.sendRedirect("/?error=oauth_failed"))
-            );
-        }
+                    String token = jwtUtil.generate(user);
+                    // Read frontend redirect URL from session (set before OAuth initiation)
+                    // Fall back to configured frontend URL
+
+                    response.sendRedirect(frontendUrl + "/auth/callback?token=" + token);
+                })
+                .failureHandler((request, response, ex) -> {
+
+                    String reason = ex.getMessage() != null
+                            ? java.net.URLEncoder.encode(ex.getMessage(), java.nio.charset.StandardCharsets.UTF_8)
+                            : "unknown";
+                    response.sendRedirect(frontendUrl + "/auth/callback?error=oauth_failed&reason=" + reason);
+                })
+        );
 
         return http.build();
     }

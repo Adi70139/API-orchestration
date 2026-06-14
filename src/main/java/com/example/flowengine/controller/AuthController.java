@@ -91,23 +91,27 @@ public class AuthController {
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 
-    @Data public static class RegisterRequest {
+    @Data
+    public static class RegisterRequest {
         private String email;
         private String name;
         private String password;
     }
 
-    @Data public static class LoginRequest {
+    @Data
+    public static class LoginRequest {
         private String email;
         private String password;
     }
 
-    @Data public static class AuthResponse {
+    @Data
+    public static class AuthResponse {
         private final String token;
         private final UserProfile user;
     }
 
-    @Data public static class UserProfile {
+    @Data
+    public static class UserProfile {
         private Long id;
         private String email;
         private String name;
