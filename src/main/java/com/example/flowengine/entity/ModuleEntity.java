@@ -20,6 +20,10 @@ public class ModuleEntity {
 
     private String description;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by")
+    private User createdBy;  // null = legacy data (visible to all)
+
     @OneToMany(
             mappedBy = "module",
             cascade = CascadeType.ALL,

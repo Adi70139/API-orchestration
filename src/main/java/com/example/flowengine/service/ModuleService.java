@@ -8,6 +8,7 @@ import com.example.flowengine.entity.FlowDefinition;
 import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.entity.ModuleExecution;
 import com.example.flowengine.repository.*;
+import com.example.flowengine.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +26,12 @@ public class ModuleService {
     private final EnvironmentRepository environmentRepository;
 
     public ModuleEntity create(ModuleEntity module) {
+        // Stamp ownership — admin-created modules with no explicit owner stay unowned (visible to all)
+        SecurityUtils.currentUser().ifPresent(user -> {
+            if (module.getCreatedBy() == null) {
+                module.setCreatedBy(user);
+            }
+        });
         return repository.save(module);
     }
 
@@ -51,8 +58,17 @@ public class ModuleService {
     }
 
     public List<ModuleResponse> getAll() {
+        var currentUser = SecurityUtils.currentUser();
         return repository.findAll()
                 .stream()
+                // ADMIN sees everything.
+                // USER sees: modules they own OR modules with no owner (legacy/shared).
+                .filter(module -> {
+                    if (currentUser.isEmpty() || SecurityUtils.isAdmin()) return true;
+                    Long userId = currentUser.get().getId();
+                    return module.getCreatedBy() == null
+                            || module.getCreatedBy().getId().equals(userId);
+                })
                 .map(module -> {
                     ModuleResponse dto = new ModuleResponse();
                     dto.setId(module.getId());
