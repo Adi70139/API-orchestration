@@ -16,6 +16,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -35,7 +39,7 @@ public class AuthController {
 
     @PostMapping("/register")
     @Operation(summary = "Register a new local user")
-    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest req) {
+    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req) {
         if (userRepository.existsByEmail(req.getEmail())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
         }
@@ -56,7 +60,7 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "Login with email and password")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest req) {
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req) {
         try {
             Authentication auth = authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword()));
@@ -93,14 +97,25 @@ public class AuthController {
 
     @Data
     public static class RegisterRequest {
+        @NotBlank(message = "Email is required")
+        @Email(message = "Must be a valid email address")
         private String email;
+
+        @NotBlank(message = "Name is required")
         private String name;
+
+        @NotBlank(message = "Password is required")
+        @Size(min = 8, message = "Password must be at least 8 characters")
         private String password;
     }
 
     @Data
     public static class LoginRequest {
+        @NotBlank(message = "Email is required")
+        @Email(message = "Must be a valid email address")
         private String email;
+
+        @NotBlank(message = "Password is required")
         private String password;
     }
 
