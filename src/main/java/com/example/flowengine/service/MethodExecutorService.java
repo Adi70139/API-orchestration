@@ -14,6 +14,7 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -92,6 +93,20 @@ public class MethodExecutorService {
             };
             result.setOutput(output);
             result.setSuccess(true);
+
+            // Generate usage hints — show exactly how to reference each output key
+            // in step URLs, headers, and body using {method.key} syntax
+            List<String> hints = new ArrayList<>();
+            output.forEach((key, value) -> {
+                String placeholder = "{method." + key + "}";
+                hints.add(String.format(
+                        "Use %s in your step URL, headers, or body to get: \"%s\"",
+                        placeholder, value.length() > 50 ? value.substring(0, 50) + "..." : value));
+            });
+            if (hints.isEmpty()) {
+                hints.add("Method produced no output keys. Make sure your script returns a Map or a value.");
+            }
+            result.setUsageHints(hints);
         } catch (Exception e) {
             result.setSuccess(false);
             result.setErrorMessage(e.getMessage());

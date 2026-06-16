@@ -1,6 +1,7 @@
 package com.example.flowengine.DTO;
 
 import lombok.Data;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -15,4 +16,11 @@ public class MethodExecutionResult {
     private String errorMessage;
     private long durationMs;
     private Map<String, String> output; // {method.key} → value
+
+    /**
+     * Human-readable instructions showing exactly how to reference each output
+     * key in step URLs, headers, and body using {method.key} syntax.
+     * Populated after a successful test or execution.
+     */
+    private List<String> usageHints;
 }

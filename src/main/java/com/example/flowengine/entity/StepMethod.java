@@ -16,7 +16,7 @@ public class StepMethod {
     @JoinColumn(name = "step_id", nullable = false)
     private FlowStep step;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "method_id", nullable = false)
     private CustomMethod method;
 
