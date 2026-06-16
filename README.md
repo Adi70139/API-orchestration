@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8060`
 
+Swagger Url:- https://api-orchestration.onrender.com/swagger-ui/index.html
+
 ---
 
 ## Table of Contents
