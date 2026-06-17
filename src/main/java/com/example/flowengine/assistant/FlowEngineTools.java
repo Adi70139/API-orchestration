@@ -2,6 +2,9 @@ package com.example.flowengine.assistant;
 
 import com.example.flowengine.DTO.*;
 import com.example.flowengine.entity.ModuleEntity;
+import com.example.flowengine.entity.ModuleSchedule;
+import com.example.flowengine.repository.ModuleRepository;
+import com.example.flowengine.repository.ModuleScheduleRepository;
 import com.example.flowengine.service.*;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
@@ -45,6 +48,10 @@ public class FlowEngineTools {
     private final ExecutorService executorService;
     private final TrendService trendService;
     private final ScheduleResultService scheduleResultService;
+    private final CustomMethodService customMethodService;
+    private final SchedulerService schedulerService;
+    private final ModuleScheduleRepository moduleScheduleRepository;
+    private final ModuleRepository moduleRepository;
 
     // ── Modules ──────────────────────────────────────────────────────────────
 
@@ -575,5 +582,206 @@ public class FlowEngineTools {
                     """;
             default -> "Supported import types: 'postman', 'swagger', 'har'. Which one do you need?";
         };
+    }
+
+    // ── Custom Methods ────────────────────────────────────────────────────────
+
+    @Tool("""
+            List all available custom methods (both global built-in methods and user-defined ones).
+            Built-in types: TIMESTAMP, UUID, RANDOM_STRING, ENCODE_BASE64, DECODE_BASE64, DATABASE_QUERY.
+            Trigger phrases: "what methods are available", "list custom methods", "show me methods".
+            """)
+    public String listCustomMethods() {
+        log.info("[Tool] listCustomMethods");
+        var methods = customMethodService.listAll();
+        if (methods.isEmpty()) return "No custom methods found.";
+        StringBuilder sb = new StringBuilder("Custom Methods:\n");
+        methods.forEach(m -> sb.append(String.format(
+                "  - [id=%d] %s (%s%s)%s\n",
+                m.getId(), m.getName(), m.getType(),
+                m.getBuiltinType() != null ? "/" + m.getBuiltinType() : "",
+                m.isGlobal() ? " [global]" : "")));
+        return sb.toString();
+    }
+
+    @Tool("""
+            Get details of a specific custom method including its parameters and how to use its output.
+            Trigger phrases: "show method details", "what does method X do", "how do I use method X".
+            """)
+    public String getCustomMethod(
+            @P("ID of the custom method. If you only have a name, call listCustomMethods first.") Long methodId) {
+        log.info("[Tool] getCustomMethod id={}", methodId);
+        var m = customMethodService.getById(methodId);
+        StringBuilder sb = new StringBuilder(String.format(
+                "Method [id=%d] '%s' (%s)\n", m.getId(), m.getName(), m.getType()));
+        sb.append(String.format("Description: %s\n",
+                m.getDescription() != null ? m.getDescription() : "none"));
+        if (m.getParameters() != null && !m.getParameters().isEmpty()) {
+            sb.append("Parameters:\n");
+            m.getParameters().forEach(p -> sb.append(String.format(
+                    "  - %s (%s)%s\n", p.getName(), p.getType(),
+                    p.isRequired() ? " [required]" : "")));
+        }
+        sb.append("\nTO USE OUTPUT IN A STEP: attach this method to the step, then reference its output as {method.KEY}.\n");
+        return sb.toString();
+    }
+
+    @Tool("""
+            List all custom methods attached to a specific step and their execution order.
+            Trigger phrases: "what methods are attached to step X", "show methods for step".
+            """)
+    public String getStepMethods(
+            @P("ID of the step. If you only have a name, call listSteps first.") Long stepId) {
+        log.info("[Tool] getStepMethods stepId={}", stepId);
+        var methods = customMethodService.getStepMethods(stepId);
+        if (methods.isEmpty()) return "No custom methods attached to step " + stepId + ".";
+        StringBuilder sb = new StringBuilder(String.format("Methods on step %d:\n", stepId));
+        methods.forEach(m -> sb.append(String.format(
+                "  %d. [stepMethodId=%d] %s — output: {method.KEY}\n",
+                m.getExecutionOrder(), m.getMethodId(), m.getMethodName())));
+        return sb.toString();
+    }
+
+    @Tool("""
+            Explain the placeholder syntax for using custom method output in step URLs, headers, and body.
+            ALWAYS use this tool when the user asks about method output placeholders, {method.KEY} syntax,
+            or how to pass method results into a step. The syntax is ALWAYS {method.KEY}.
+            Trigger phrases: "how to use method output", "placeholder syntax", "method result in request".
+            """)
+    public String explainMethodPlaceholders() {
+        return """
+                CUSTOM METHOD OUTPUT — PLACEHOLDER SYNTAX
+
+                After attaching a method to a step, it runs BEFORE the HTTP request.
+                Its output keys become available as {method.KEY} in that step.
+
+                SYNTAX: {methodName.KEY}
+                  - "methodName" is the method's name converted to camelCase
+                  - "KEY" is the field name returned by the method
+
+                CAMELCASE CONVERSION EXAMPLES:
+                  "Custom Number Picker" → customNumberPicker
+                  "UUID Generator"       → uuidGenerator
+                  "my-token-gen"         → myTokenGen
+
+                USAGE EXAMPLES (method named "Auth Token"):
+                  Method returns: {"token": "abc123", "userId": "42"}
+                  URL:    /api/users/{authToken.userId}/profile
+                  Header: Authorization: Bearer {authToken.token}
+                  Body:   {"auth": "{authToken.token}"}
+
+                BUILT-IN METHOD OUTPUT KEYS:
+                  A method named "Get Timestamp" (TIMESTAMP) → {getTimestamp.timestamp}
+                  A method named "My UUID" (UUID)             → {myUuid.uuid}
+                  A method named "Encode Data" (ENCODE_BASE64)→ {encodeData.encoded}
+                  A method named "DB Query" (DATABASE_QUERY)  → {dbQuery.COLUMN_NAME}
+
+                NO MORE COLLISIONS:
+                  Two methods can both return "result" — they're namespaced by their own name:
+                  {methodOne.result} and {methodTwo.result} are always distinct.
+
+                HOW TO FIND THE EXACT PLACEHOLDER:
+                  Test the method via POST /methods/test — the response includes
+                  usageHints showing the exact {camelName.key} placeholders to use.
+                """;
+    }
+
+    // ── Scheduling ────────────────────────────────────────────────────────────
+
+    @Tool("""
+            Get the current automatic run schedule for a module.
+            Trigger phrases: "when does module X run", "get schedule", "show schedule".
+            """)
+    public String getModuleSchedule(
+            @P("ID of the module. If you only have a name, call listModules first.") Long moduleId) {
+        log.info("[Tool] getModuleSchedule moduleId={}", moduleId);
+        return moduleScheduleRepository.findByModuleId(moduleId)
+                .map(s -> String.format("Module %d schedule: runs daily at %s (%s) — %s",
+                        moduleId, s.getTime(), s.getTimezone(),
+                        s.isActive() ? "ACTIVE" : "INACTIVE"))
+                .orElse("No schedule set for module " + moduleId + ".");
+    }
+
+    @Tool("""
+            Set or update the automatic daily run schedule for a module. Requires confirmation.
+            Time format: HH:mm (24-hour). Timezone examples: Asia/Kolkata, UTC, America/New_York.
+            Trigger phrases: "schedule module to run at", "set schedule", "run daily at".
+            """)
+    public String setModuleSchedule(
+            @P("ID of the module. If you only have a name, call listModules first.") Long moduleId,
+            @P("Time in HH:mm format, e.g. 09:00") String time,
+            @P("Timezone e.g. Asia/Kolkata or UTC") String timezone,
+            @P("Pass exactly \"true\" or \"false\". Set to \"true\" only after user confirmed.") String confirmed) {
+        if (!isConfirmed(confirmed)) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Schedule module [id=%d] to run daily at %s (%s)", moduleId, time, timezone));
+        }
+        log.info("[Tool] setModuleSchedule moduleId={} time={} tz={}", moduleId, time, timezone);
+        ModuleEntity module = moduleRepository.findById(moduleId)
+                .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
+        ModuleSchedule schedule = moduleScheduleRepository.findByModuleId(moduleId)
+                .orElse(new ModuleSchedule());
+        schedule.setModule(module);
+        schedule.setTime(time);
+        schedule.setTimezone(timezone);
+        schedule.setActive(true);
+        schedule = moduleScheduleRepository.save(schedule);
+        schedulerService.registerSchedule(schedule);
+        return String.format("Schedule set: module '%s' will run daily at %s (%s)",
+                module.getName(), time, timezone);
+    }
+
+    @Tool("""
+            Delete/deactivate the schedule for a module. Requires confirmation.
+            Trigger phrases: "remove schedule", "stop auto-run", "cancel schedule".
+            """)
+    public String deleteModuleSchedule(
+            @P("ID of the module. If you only have a name, call listModules first.") Long moduleId,
+            @P("Pass exactly \"true\" or \"false\". Set to \"true\" only after user confirmed.") String confirmed) {
+        if (!isConfirmed(confirmed)) {
+            return String.format(CONFIRM_MSG,
+                    String.format("Delete schedule for module [id=%d]", moduleId));
+        }
+        log.info("[Tool] deleteModuleSchedule moduleId={}", moduleId);
+        moduleScheduleRepository.findByModuleId(moduleId).ifPresent(s -> {
+            s.setActive(false);
+            moduleScheduleRepository.save(s);
+        });
+        schedulerService.cancelSchedule(moduleId);
+        return "Schedule deleted for module " + moduleId + ".";
+    }
+
+    // ── App explanation ───────────────────────────────────────────────────────
+
+    @Tool("""
+            Explain what this application is and what features it has.
+            ALWAYS call this tool when the user asks: "what is this app", "what does this do",
+            "explain this tool", "what can I do here", "what are the features", "give me an overview".
+            Never answer from memory — always call this tool.
+            """)
+    public String explainApp() {
+        return """
+                FLOW ENGINE — API Orchestration & Testing Platform
+
+                A no-code platform for building, running, and monitoring API test flows.
+
+                KEY CONCEPTS:
+                  Module      → Workspace grouping related flows
+                  Flow        → Ordered sequence of HTTP API calls run as a test
+                  Step        → Single HTTP request with assertions
+                  Environment → Swappable variable sets (base URLs, tokens)
+
+                FEATURES:
+                  API Flows, Chained Placeholders, Custom Methods ({method.KEY}),
+                  Assertions, Skip Conditions, Retry & Polling, Bulk Execution,
+                  Scheduling, Import (Postman/Swagger/HAR), HAR Payload Variants,
+                  PDF Reports, Trend Analytics, Dependency Graph,
+                  AI Assistant (this chat), Role-based Auth, Google OAuth2.
+
+                PLACEHOLDER SYNTAX:
+                  {fieldName}    → previous step response value
+                  {env.VAR}      → environment variable
+                  {camelCaseName.KEY} → custom method output (e.g. method "Auth Token" → {authToken.token})
+                """;
     }
 }

@@ -22,8 +22,10 @@ public class AssistantConfig {
                     "Your job is to help users build, manage, and run API test flows. You have direct access to tools " +
                     "that can read and modify the application. Use them when a user asks to inspect or change data.\n\n" +
                     "SCOPE: Only answer questions related to this application - modules, flows, steps, environments, " +
-                    "execution, scheduling, assertions, skip conditions, placeholders, retries, polling, and UI automation. " +
-                    "Politely decline unrelated questions.\n\n" +
+                    "custom methods, assertions, skip conditions, placeholders ({method.KEY} syntax), retries, " +
+                    "polling, scheduling, bulk execution, reports, analytics, UI automation, import/export, auth. " +
+                    "For app overview questions use the explainApp tool. " +
+                    "Politely decline truly unrelated questions.\n\n" +
                     "CRITICAL: You have REAL tool-calling capability. NEVER write out a tool call as JSON text " +
                     "in your reply (e.g. never output something like {\"name\": \"listFlows\", \"parameters\": {}}). " +
                     "If you find yourself about to type a JSON object describing a function call, STOP and " +
@@ -72,8 +74,13 @@ public class AssistantConfig {
                     "  User: yes\n" +
                     "  Assistant: calls deleteFlow(flowId=5, confirmed=true)\n" +
                     "  Tool executes and returns success.\n\n" +
-                    "PLACEHOLDERS: In step URLs/headers/bodies, wrapping a field name in curly braces resolves it " +
-                    "from previous step responses at runtime using dot notation.\n\n" +
+                    "PLACEHOLDERS:\n" +
+                    "  {fieldName}          — value from the previous step's JSON response (dot notation for nested)\n" +
+                    "  {env.VAR}            — environment variable\n" +
+                    "  {camelCaseName.KEY}  — output from a custom method (method name in camelCase + output key)\n" +
+                    "  Example: method 'Auth Token' returning 'token' → {authToken.token}\n" +
+                    "  Example: method 'UUID Generator' returning 'uuid' → {uuidGenerator.uuid}\n" +
+                    "  To find exact placeholders: test the method — usageHints shows the exact syntax.\n\n" +
                     "UI AUTOMATION: When a user wants to automate a web page or create a UI test, use the " +
                     "generateUIAutomation tool. You need: the page URL, natural language steps, module name, flow name, " +
                     "and multiPage (boolean). Default multiPage=true for anything involving more than one screen " +

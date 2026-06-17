@@ -59,9 +59,22 @@ public class MethodExecutorService {
                 result.setSuccess(true);
                 result.setDurationMs(System.currentTimeMillis() - start);
 
-                // Prefix all keys with "method." and merge
-                output.forEach((k, v) -> mergedOutput.put("method." + k, v));
-                log.info("Method '{}' produced {} output key(s): {}", method.getName(), output.size(), output.keySet());
+                // Use camelCase method name as the namespace prefix.
+                // e.g. method named "Custom Number Picker" → {customNumberPicker.result}
+                // This is unambiguous even when multiple methods share the same output key.
+                String camelName = toCamelCase(method.getName());
+
+                List<String> hints = new ArrayList<>();
+                output.forEach((k, v) -> {
+                    String key = camelName + "." + k;
+                    mergedOutput.put(key, v);
+                    String preview = v != null && v.length() > 40 ? v.substring(0, 40) + "..." : v;
+                    hints.add(String.format("Use {%s} → \"%s\"", key, preview));
+                });
+                result.setUsageHints(hints);
+
+                log.info("Method '{}' (→ {}) produced {} key(s): {}",
+                        method.getName(), camelName, output.size(), output.keySet());
 
             } catch (Exception e) {
                 log.error("Method '{}' failed: {}", method.getName(), e.getMessage());
@@ -94,17 +107,18 @@ public class MethodExecutorService {
             result.setOutput(output);
             result.setSuccess(true);
 
-            // Generate usage hints — show exactly how to reference each output key
-            // in step URLs, headers, and body using {method.key} syntax
+            // Generate camelCase placeholder hints matching the runtime behavior
+            String camelName = toCamelCase(method.getName());
             List<String> hints = new ArrayList<>();
             output.forEach((key, value) -> {
-                String placeholder = "{method." + key + "}";
-                hints.add(String.format(
-                        "Use %s in your step URL, headers, or body to get: \"%s\"",
-                        placeholder, value.length() > 50 ? value.substring(0, 50) + "..." : value));
+                String placeholder = "{" + camelName + "." + key + "}";
+                String preview = value != null && value.length() > 50
+                        ? value.substring(0, 50) + "..." : value;
+                hints.add(String.format("Use %s in your step URL, headers, or body → \"%s\"",
+                        placeholder, preview));
             });
             if (hints.isEmpty()) {
-                hints.add("Method produced no output keys. Make sure your script returns a Map or a value.");
+                hints.add("Method produced no output keys. Make sure your script returns a Map.");
             }
             result.setUsageHints(hints);
         } catch (Exception e) {
@@ -116,6 +130,27 @@ public class MethodExecutorService {
     }
 
     // ─── Builtin implementations ──────────────────────────────────────────────
+
+    /**
+     * Converts a method name to camelCase for use as a placeholder prefix.
+     * "Custom Number Picker" → "customNumberPicker"
+     * "my-token-gen"         → "myTokenGen"
+     * "UUID Generator"       → "uuidGenerator"
+     */
+    private String toCamelCase(String name) {
+        if (name == null || name.isBlank()) return "method";
+        String[] words = name.trim().split("[\\s\\-_]+");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            String w = words[i].replaceAll("[^a-zA-Z0-9]", "");
+            if (w.isEmpty()) continue;
+            if (i == 0) sb.append(Character.toLowerCase(w.charAt(0)))
+                    .append(w.length() > 1 ? w.substring(1).toLowerCase() : "");
+            else sb.append(Character.toUpperCase(w.charAt(0)))
+                    .append(w.length() > 1 ? w.substring(1).toLowerCase() : "");
+        }
+        return sb.isEmpty() ? "method" : sb.toString();
+    }
 
     private Map<String, String> runBuiltin(BuiltinMethodType type, Map<String, String> params) {
         return switch (type) {

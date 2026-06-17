@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.AriaRole;
 import com.microsoft.playwright.options.LoadState;
+import com.microsoft.playwright.options.WaitForSelectorState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -232,8 +233,15 @@ public class PlaywrightExecutorService {
             case "uncheck" -> { resolve(page, loc).uncheck(); yield "Unchecked: " + loc; }
             case "hover"   -> { resolve(page, loc).hover();   yield "Hovered: " + loc; }
             case "waitforselector" -> {
-                page.waitForSelector(loc);
-                yield "Element appeared: " + loc;
+                Locator locator = resolve(page, loc);
+
+                locator.waitFor(
+                        new Locator.WaitForOptions()
+                                .setState(WaitForSelectorState.VISIBLE)
+                                .setTimeout(10000)
+                );
+
+                yield "Element visible: " + loc;
             }
             case "waitforurl" -> {
                 String target = action.url != null ? action.url : val;
