@@ -51,7 +51,7 @@ public class MethodExecutorService {
                 Map<String, String> resolvedParams = resolveBindings(sm.getParameterBindingsJson(), previousResponses);
 
                 Map<String, String> output = switch (method.getType()) {
-                    case BUILTIN -> runBuiltin(method.getBuiltinType(), resolvedParams);
+                    case BUILTIN -> runBuiltin(method.getBuiltinType(), resolvedParams, false);
                     case USER_DEFINED -> runGroovy(method.getGroovyScript(), resolvedParams);
                 };
 
@@ -101,7 +101,7 @@ public class MethodExecutorService {
 
         try {
             Map<String, String> output = switch (method.getType()) {
-                case BUILTIN -> runBuiltin(method.getBuiltinType(), params);
+                case BUILTIN -> runBuiltin(method.getBuiltinType(), params, true);
                 case USER_DEFINED -> runGroovy(method.getGroovyScript(), params);
             };
             result.setOutput(output);
@@ -152,7 +152,7 @@ public class MethodExecutorService {
         return sb.isEmpty() ? "method" : sb.toString();
     }
 
-    private Map<String, String> runBuiltin(BuiltinMethodType type, Map<String, String> params) {
+    private Map<String, String> runBuiltin(BuiltinMethodType type, Map<String, String> params, boolean testRun) {
         return switch (type) {
             case RANDOM_NUMBER -> {
                 int min = Integer.parseInt(params.getOrDefault("min", "1"));
@@ -173,17 +173,17 @@ public class MethodExecutorService {
                 String result = String.join(separator, Arrays.asList(values.split(",")));
                 yield Map.of("result", result.trim());
             }
-            case DB_QUERY -> runDbQuery(params);
+            case DB_QUERY -> runDbQuery(params, testRun);
         };
     }
 
-    private Map<String, String> runDbQuery(Map<String, String> params) {
+    private Map<String, String> runDbQuery(Map<String, String> params, boolean testRun) {
         String connectionString = params.get("connectionString");
         String username = params.get("username");
-        String encryptedPassword = params.get("password");
+        String passwordParam = params.get("password");
         String query = params.get("query");
 
-        if (connectionString == null || username == null || encryptedPassword == null || query == null) {
+        if (connectionString == null || username == null || passwordParam == null || query == null) {
             throw new IllegalArgumentException("DB_QUERY requires: connectionString, username, password, query");
         }
 
@@ -193,8 +193,10 @@ public class MethodExecutorService {
             throw new IllegalArgumentException("Only SELECT queries are allowed");
         }
 
-        String password = encryptionService.decrypt(encryptedPassword);
+        String password = resolveDbPassword(passwordParam, testRun);
 
+        log.info("DB_QUERY executing testRun={} url='{}' user='{}' queryPreview='{}'",
+                testRun, safeJdbcUrl(connectionString), username, preview(query));
         try (Connection conn = DriverManager.getConnection(connectionString, username, password);
              PreparedStatement stmt = conn.prepareStatement(query);
              ResultSet rs = stmt.executeQuery()) {
@@ -225,8 +227,34 @@ public class MethodExecutorService {
             return selectedRow;
 
         } catch (SQLException e) {
+            log.error("DB_QUERY failed for url='{}' user='{}': SQLState={} vendorCode={} message={}",
+                    safeJdbcUrl(connectionString), username, e.getSQLState(), e.getErrorCode(), e.getMessage());
             throw new RuntimeException("DB query failed: " + e.getMessage(), e);
         }
+    }
+
+    private String resolveDbPassword(String passwordParam, boolean testRun) {
+        if (testRun) {
+            return passwordParam;
+        }
+        try {
+            return encryptionService.decrypt(passwordParam);
+        } catch (RuntimeException e) {
+            log.warn("DB_QUERY password is not encrypted or cannot be decrypted; using it as plain text. " +
+                    "Use /methods/encrypt-password for stored bindings.");
+            return passwordParam;
+        }
+    }
+
+    private String preview(String value) {
+        if (value == null) return "";
+        String singleLine = value.replaceAll("\\s+", " ").trim();
+        return singleLine.length() > 120 ? singleLine.substring(0, 120) + "..." : singleLine;
+    }
+
+    private String safeJdbcUrl(String connectionString) {
+        if (connectionString == null) return "";
+        return connectionString.replaceAll("(?i)(password|pwd)=([^;?&]+)", "$1=<redacted>");
     }
 
     // ─── Groovy execution ─────────────────────────────────────────────────────
