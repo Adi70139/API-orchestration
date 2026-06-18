@@ -10,6 +10,7 @@ import com.example.flowengine.entity.ModuleExecution;
 import com.example.flowengine.repository.*;
 import com.example.flowengine.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -25,6 +26,10 @@ public class ModuleService {
     private final ModuleExecutionRepository moduleExecutionRepository;
     private final EnvironmentRepository environmentRepository;
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "environmentsById", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public ModuleEntity create(ModuleEntity module) {
         // Stamp ownership — admin-created modules with no explicit owner stay unowned (visible to all)
         SecurityUtils.currentUser().ifPresent(user -> {
@@ -35,6 +40,10 @@ public class ModuleService {
         return repository.save(module);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "environmentsById", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public ModuleResponse update(ModuleUpdateRequest module, Long moduleId) {
 
         ModuleEntity existingModule = repository.findById(moduleId)
@@ -84,6 +93,10 @@ public class ModuleService {
                 .toList();
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow", "stepsById",
+            "environmentsByModule", "environmentsById", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public void delete(Long moduleId) {
         if (!repository.existsById(moduleId)) {
             throw new IllegalArgumentException("Module not found with id: " + moduleId);

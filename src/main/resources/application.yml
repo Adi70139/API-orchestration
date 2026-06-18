@@ -1,4 +1,9 @@
 spring:
+  cache:
+    type: caffeine
+    caffeine:
+      spec: ${CACHE_CAFFEINE_SPEC:maximumSize=1000,expireAfterWrite=5m}
+
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/flow_engine}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
@@ -88,6 +93,7 @@ ui:
 
 logging:
   level:
+    org.springframework.cache: ${CACHE_LOG_LEVEL:INFO}
     com.example.flowengine.service.AppAssistantService: INFO
     com.example.flowengine.service.AssertionGeneratorService: DEBUG
     com.itextpdf.layout.renderer.TableWidths: ERROR

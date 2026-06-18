@@ -13,6 +13,8 @@ import com.example.flowengine.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -33,6 +35,10 @@ public class FlowService {
     private final FlowStepRepository flowStepRepository;
     private final ObjectMapper objectMapper;
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public FlowDTO create(FlowRequest request) {
         // Find the module by name
         ModuleEntity module = moduleRepository.findByName(request.getModule())
@@ -60,6 +66,10 @@ public class FlowService {
         return mapToFlowDTO(flow);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public FlowDTO update(FlowRequest request, Long flowId) {
 
         FlowDefinition flow = flowRepository.findById(flowId)
@@ -96,24 +106,34 @@ public class FlowService {
 
 
 
+    @Cacheable(cacheNames = "flowsByModuleName", key = "#moduleName")
     public List<FlowDTO> getFlowsByModuleName(String moduleName) {
+        log.info("Getting flows by module name: '{}'", moduleName);
         return flowRepository.findByModule_Name(moduleName).stream()
                 .map(this::mapToFlowDTO)
                 .collect(Collectors.toList());
     }
 
+    @Cacheable(cacheNames = "flowsAll")
     public List<FlowDTO> getAll() {
+        log.info("Getting all flows from DB");
         return flowRepository.findAll().stream()
                 .map(this::mapToFlowDTO)
                 .collect(Collectors.toList());
     }
 
+    @Cacheable(cacheNames = "flowDetails", key = "#id")
     public FlowDetailedDTO getById(Long id) {
+        log.info("Getting flow by id: {}", id);
         FlowDefinition flow = flowRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + id));
         return mapToFlowDetailedDTO(flow);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public void delete(Long flowId) {
         if (!flowRepository.existsById(flowId)) {
             throw new IllegalArgumentException("Flow not found with id: " + flowId);
@@ -125,6 +145,10 @@ public class FlowService {
         flowRepository.deleteById(flowId);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public FlowDTO setDefaultEnvironment(Long flowId, Long environmentId) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
@@ -143,6 +167,10 @@ public class FlowService {
         return mapToFlowDTO(flow);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public FlowDTO clearDefaultEnvironment(Long flowId) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
@@ -151,6 +179,10 @@ public class FlowService {
         return mapToFlowDTO(flow);
     }
 
+    @CacheEvict(cacheNames = {
+            "flowsAll", "flowsByModuleName", "flowDetails", "stepsByFlow",
+            "environmentsByModule", "decryptedEnvironmentVariables"
+    }, allEntries = true)
     public FlowDTO duplicateFlow(Long flowId, DuplicateFlowRequest request) {
         FlowDefinition original = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));

@@ -10,6 +10,8 @@ import com.example.flowengine.repository.FlowStepRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +37,7 @@ public class FlowStepService {
     private final FlowRepository flowRepository;
     private final ObjectMapper objectMapper;
 
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow"}, allEntries = true)
     public FlowStep create(Long flowId, FlowStepRequest request) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
@@ -58,18 +61,23 @@ public class FlowStepService {
         return flowStepRepository.save(step);
     }
 
+    @Cacheable(cacheNames = "stepsByFlow", key = "#flowId")
     public List<FlowStep> getByFlowId(Long flowId) {
+        log.info("Getting flow steps by flow id: {}", flowId);
         if (!flowRepository.existsById(flowId)) {
             throw new IllegalArgumentException("Flow not found with id: " + flowId);
         }
         return flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
     }
 
+    @Cacheable(cacheNames = "stepsById", key = "#stepId")
     public FlowStep getById(Long stepId) {
+        log.info("Getting flow step by id: {}", stepId);
         return flowStepRepository.findById(stepId)
                 .orElseThrow(() -> new IllegalArgumentException("FlowStep not found with id: " + stepId));
     }
 
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
     public FlowStep update(Long stepId, FlowStepRequest request) {
         FlowStep step = getById(stepId);
         step.setName(request.getName());
@@ -87,6 +95,7 @@ public class FlowStepService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
     public List<FlowStep> reorder(Long flowId, FlowStepReorderRequest request) {
         if (!flowRepository.existsById(flowId)) {
             throw new IllegalArgumentException("Flow not found with id: " + flowId);
@@ -135,6 +144,7 @@ public class FlowStepService {
         return flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
     }
 
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
     public FlowStep duplicate(Long flowId, Long stepId, DuplicateFlowStepRequest request) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
@@ -169,6 +179,7 @@ public class FlowStepService {
         return flowStepRepository.save(duplicate);
     }
 
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
     public void delete(Long stepId) {
         FlowStep step = getById(stepId);
         List<Long> dependentStepIds = flowStepRepository.findByFlowIdOrderByStepOrder(step.getFlow().getId()).stream()

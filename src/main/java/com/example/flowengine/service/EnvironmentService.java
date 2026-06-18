@@ -13,6 +13,8 @@ import com.example.flowengine.entity.ModuleEntity;
 import com.example.flowengine.repository.FlowRepository;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -30,6 +32,10 @@ public class EnvironmentService {
     private final ObjectMapper objectMapper;
     private final FlowRepository flowRepository;
 
+    @CacheEvict(cacheNames = {
+            "environmentsById", "environmentsByModule", "decryptedEnvironmentVariables",
+            "flowDetails", "flowsAll", "flowsByModuleName"
+    }, allEntries = true)
     public EnvironmentResponse create(Long moduleId, EnvironmentRequest request) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
@@ -50,6 +56,10 @@ public class EnvironmentService {
         return toResponse(environmentRepository.save(env));
     }
 
+    @CacheEvict(cacheNames = {
+            "environmentsById", "environmentsByModule", "decryptedEnvironmentVariables",
+            "flowDetails", "flowsAll", "flowsByModuleName"
+    }, allEntries = true)
     public EnvironmentResponse update(Long envId, EnvironmentRequest request) {
         Environment env = getEntityById(envId);
         env.setName(request.getName().toUpperCase());
@@ -63,15 +73,21 @@ public class EnvironmentService {
         return toResponse(environmentRepository.save(env));
     }
 
+    @Cacheable(cacheNames = "environmentsById", key = "#envId")
     public EnvironmentResponse getById(Long envId) {
         return toResponse(getEntityById(envId));
     }
 
+    @Cacheable(cacheNames = "environmentsByModule", key = "#moduleId")
     public List<EnvironmentResponse> getByModuleId(Long moduleId) {
         return environmentRepository.findByModuleId(moduleId)
                 .stream().map(this::toResponse).collect(Collectors.toList());
     }
 
+    @CacheEvict(cacheNames = {
+            "environmentsById", "environmentsByModule", "decryptedEnvironmentVariables",
+            "flowDetails", "flowsAll", "flowsByModuleName"
+    }, allEntries = true)
     @Transactional
     public void delete(Long envId) {
         // ensure env exists (throws if not)
@@ -99,6 +115,7 @@ public class EnvironmentService {
     /**
      * Decrypt and return variables map for use during execution.
      */
+    @Cacheable(cacheNames = "decryptedEnvironmentVariables", key = "#envId")
     public Map<String, String> getDecryptedVariables(Long envId) {
         Environment env = getEntityById(envId);
         if (env.getVariablesJson() == null || env.getVariablesJson().isEmpty()) {
