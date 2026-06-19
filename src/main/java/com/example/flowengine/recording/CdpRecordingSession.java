@@ -155,6 +155,14 @@ class CdpRecordingSession {
         command.add("--no-first-run");
         command.add("--no-default-browser-check");
         command.add("about:blank");
+        
+        if (Boolean.parseBoolean(System.getenv("UI_AUTOMATION_HEADLESS"))) {
+            command.add("--headless=new");
+            command.add("--no-sandbox");
+            command.add("--disable-gpu");
+            command.add("--disable-dev-shm-usage");
+        }
+        
         return new ProcessBuilder(command).start();
     }
 
