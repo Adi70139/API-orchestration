@@ -38,7 +38,7 @@ import java.util.logging.Logger;
 class CdpRecordingSession {
     private static final Logger log = Logger.getLogger(CdpRecordingSession.class.getName());
     private static final int STARTUP_TIMEOUT_MILLIS = 15_000;
-    private static final int CDP_COMMAND_TIMEOUT_SECONDS = 2;
+    private static final int CDP_COMMAND_TIMEOUT_SECONDS = 20;
 
     private final ObjectMapper objectMapper;
     private final RecordingStartRequest options;
