@@ -12,8 +12,6 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 
-import java.util.Map;
-
 @RestController
 @RequestMapping("/users/me")
 @RequiredArgsConstructor
@@ -38,14 +36,6 @@ public class UserController {
         User user = (User) authentication.getPrincipal();
         userService.deleteUserAndData(user.getId());
         return ResponseEntity.noContent().build();
-    }
-
-    @GetMapping("/dashboard")
-    @Operation(summary = "Get current user's dashboard data (modules and recent executions)")
-    public ResponseEntity<Map<String, Object>> getDashboard(Authentication authentication) {
-        User user = (User) authentication.getPrincipal();
-        Map<String, Object> dashboard = userService.getUserDashboard(user.getId());
-        return ResponseEntity.ok(dashboard);
     }
 
     @Data
