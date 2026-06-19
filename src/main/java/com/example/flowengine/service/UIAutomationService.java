@@ -146,7 +146,9 @@ public class UIAutomationService {
             BrowserType.LaunchOptions opts = new BrowserType.LaunchOptions().setHeadless(headless);
             try (Browser browser = playwright.chromium().launch(opts)) {
                 BrowserContext ctx = browser.newContext(
-                        new Browser.NewContextOptions().setViewportSize(1280, 800));
+                        new Browser.NewContextOptions()
+                                .setViewportSize(1280, 800)
+                                .setIgnoreHTTPSErrors(true)); // bypass VPN/corporate proxy cert interception
 
                 applyAuth(ctx, request);
                 Page page = ctx.newPage();
