@@ -162,20 +162,26 @@ class CdpRecordingSession {
         List<String> candidates = List.of(
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-                "google-chrome",
-                "chromium",
-                "chromium-browser",
                 "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
                 "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
         );
         for (String candidate : candidates) {
-            if ((candidate.startsWith("/") || candidate.contains(":\\")) && Files.exists(Path.of(candidate))) {
-                return candidate;
-            }
-            if (!candidate.startsWith("/") && !candidate.contains(":\\")) {
+            if (Files.exists(Path.of(candidate))) {
                 return candidate;
             }
         }
+        
+        // Fallback: Use Playwright's downloaded Chromium if available
+        try {
+            try (com.microsoft.playwright.Playwright playwright = com.microsoft.playwright.Playwright.create()) {
+                String executablePath = playwright.chromium().executablePath().toString();
+                log.info("[CDP] Using Playwright Chromium executable: " + executablePath);
+                return executablePath;
+            }
+        } catch (Exception e) {
+            log.warning("[CDP] Could not retrieve Playwright Chromium path: " + e.getMessage());
+        }
+
         return "google-chrome";
     }
 

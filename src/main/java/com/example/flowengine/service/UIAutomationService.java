@@ -6,8 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.LoadState;
+import okhttp3.*;
+import okhttp3.OkHttpClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Request;
+import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -28,10 +32,13 @@ import java.util.*;
 @RequiredArgsConstructor
 public class UIAutomationService {
 
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+
     final FlowService flowService;
     final FlowStepService flowStepService;
     final ObjectMapper objectMapper;
     final PlaywrightExecutorService playwrightExecutorService;
+    final OkHttpClient okHttpClient;
 
     @Value("${ui.automation.headless:false}")
     boolean headless;
@@ -40,6 +47,15 @@ public class UIAutomationService {
     String groqApiKey;
     @Value("${groq.model:llama-3.3-70b-versatile}")
     String groqModel;
+
+    @Value("${llm.provider:ollama}")
+    String llmProvider;
+
+    @Value("${ollama.base-url:http://localhost:11434}")
+    String ollamaBaseUrl;
+
+    @Value("${ollama.model:llama3.1}")
+    String ollamaModel;
 
     /** Injected JS that walks the DOM and returns interactive elements with best locators. */
     static final String SCRAPE_JS = """
@@ -401,7 +417,7 @@ public class UIAutomationService {
                 - Prefer getByRole over getByText for buttons/links.
                 """.formatted(currentUrl, elementList, nlSteps);
 
-        String responseJson = callGroq(prompt);
+        String responseJson = callLLM(prompt);
         return objectMapper.readValue(responseJson, new TypeReference<>() {});
     }
 
@@ -442,7 +458,7 @@ public class UIAutomationService {
                 For assertVisible/assertText with locator=NULL: keep null, ensure value is set.
                 """.formatted(currentUrl, elementList, existingSteps);
 
-        String responseJson = callGroq(prompt);
+        String responseJson = callLLM(prompt);
         return objectMapper.readValue(responseJson, new TypeReference<>() {});
     }
 
@@ -475,40 +491,64 @@ public class UIAutomationService {
         }
     }
 
+    // ── LLM dispatch ──────────────────────────────────────────────────────────
+    String callLLM(String prompt) throws Exception {
+        if ("ollama".equalsIgnoreCase(llmProvider)) {
+            return callOllama(prompt);
+        }
+        return callGroq(prompt);
+    }
+
+    String callOllama(String prompt) throws Exception {
+        String body = objectMapper.writeValueAsString(
+                Map.of("model", ollamaModel, "prompt", prompt, "stream", false));
+        Request req = new Request.Builder()
+                .url(ollamaBaseUrl + "/api/generate")
+                .post(RequestBody.create(body, JSON))
+                .build();
+        try (Response response = okHttpClient.newCall(req).execute()) {
+            if (!response.isSuccessful()) throw new RuntimeException("Ollama error: HTTP " + response.code());
+            String content = objectMapper.readTree(response.body().string()).path("response").asText();
+            
+            // Strip markdown fences
+            content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
+            log.info("[UIAutomation] Ollama response: {}", content.substring(0, Math.min(200, content.length())));
+            return content;
+        }
+    }
+
     // ── Groq API call ─────────────────────────────────────────────────────────
     String callGroq(String prompt) throws Exception {
         if (groqApiKey == null || groqApiKey.isBlank()) {
             throw new IllegalStateException("GROQ_API_KEY not set — cannot generate automation steps.");
         }
 
-        var requestBody = objectMapper.writeValueAsString(Map.of(
+        String requestBody = objectMapper.writeValueAsString(Map.of(
                 "model", groqModel,
                 "temperature", 0.1,
                 "max_tokens", 2000,
                 "messages", List.of(Map.of("role", "user", "content", prompt))
         ));
 
-        var http = java.net.http.HttpClient.newHttpClient();
-        var req = java.net.http.HttpRequest.newBuilder()
-                .uri(java.net.URI.create("https://api.groq.com/openai/v1/chat/completions"))
+        Request req = new Request.Builder()
+                .url("https://api.groq.com/openai/v1/chat/completions")
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + groqApiKey)
-                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestBody))
+                .post(RequestBody.create(requestBody, JSON))
                 .build();
 
-        var resp = http.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) {
-            throw new RuntimeException("Groq API error " + resp.statusCode() + ": " + resp.body());
+        try (Response response = okHttpClient.newCall(req).execute()) {
+            if (!response.isSuccessful()) throw new RuntimeException("Groq error: HTTP " + response.code() + ": " + response.body().string());
+            
+            var respNode = objectMapper.readTree(response.body().string());
+            String content = respNode.at("/choices/0/message/content").asText();
+
+            // Strip markdown fences if model wrapped in them anyway
+            content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
+
+            log.info("[UIAutomation] LLM response: {}", content.substring(0, Math.min(200, content.length())));
+            return content;
         }
-
-        var respNode = objectMapper.readTree(resp.body());
-        String content = respNode.at("/choices/0/message/content").asText();
-
-        // Strip markdown fences if model wrapped in them anyway
-        content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
-
-        log.info("[UIAutomation] LLM response: {}", content.substring(0, Math.min(200, content.length())));
-        return content;
     }
 
     // ── Playwright script generation ──────────────────────────────────────────
