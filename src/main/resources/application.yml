@@ -1,0 +1,99 @@
+spring:
+  cache:
+    type: caffeine
+    caffeine:
+      spec: ${CACHE_CAFFEINE_SPEC:maximumSize=1000,expireAfterWrite=5m}
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/flow_engine}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+  security:
+      oauth2:
+        client:
+          registration:
+            google:
+              client-id: ${GOOGLE_CLIENT_ID:}
+              client-secret: ${GOOGLE_CLIENT_SECRET:}
+              scope: openid, email, profile
+              redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 50MB
+
+server:
+  port: ${PORT:8060}
+
+app:
+  encryption:
+    secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
+  jwt:
+    secret: ${JWT_SECRET:flowengine-jwt-secret-key-change-in-production-min-32-chars}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}  # 24 hours
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+http:
+  client:
+    connect-timeout-seconds: ${HTTP_CONNECT_TIMEOUT:10}
+    read-timeout-seconds: ${HTTP_READ_TIMEOUT:120}
+    write-timeout-seconds: ${HTTP_WRITE_TIMEOUT:30}
+    max-connections: ${HTTP_MAX_CONNECTIONS:20}
+    max-connections-per-host: ${HTTP_MAX_CONNECTIONS_PER_HOST:10}
+    keep-alive-minutes: ${HTTP_KEEP_ALIVE_MINUTES:5}
+    max-concurrent-requests: ${HTTP_MAX_CONCURRENT_REQUESTS:20}
+    max-concurrent-requests-per-host: ${HTTP_MAX_CONCURRENT_REQUESTS_PER_HOST:10}
+
+scheduler:
+  thread-pool-size: ${SCHEDULER_POOL_SIZE:20}
+
+bulk:
+  executor:
+    thread-pool-size: ${BULK_EXECUTOR_POOL_SIZE:10}
+
+# LLM — Groq is the default for both local and deployed.
+# Get a free key at https://console.groq.com and set GROQ_API_KEY env var.
+llm:
+  provider: ${LLM_PROVIDER:ollama}
+
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+
+# Ollama kept as fallback — set LLM_PROVIDER=ollama to use it.
+# Requires a tool-calling model: ollama pull llama3.1
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:llama3.1}
+
+# UI Automation — Playwright
+# headless=false shows the browser window during scraping/generation (good for local dev)
+# Set to true in Docker/CI where there's no display
+ui:
+  automation:
+    headless: ${UI_AUTOMATION_HEADLESS:false}
+    slow-mo-ms: ${UI_AUTOMATION_SLOW_MO:800}  # ms between actions so user can follow along
+
+logging:
+  level:
+    org.springframework.cache: ${CACHE_LOG_LEVEL:INFO}
+    com.example.flowengine.service.AppAssistantService: INFO
+    com.example.flowengine.service.AssertionGeneratorService: DEBUG
+    com.itextpdf.layout.renderer.TableWidths: ERROR
