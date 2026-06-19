@@ -13,4 +13,6 @@ public interface ModuleRepository extends JpaRepository<ModuleEntity, Long> {
 
        // find modules which have this environment set as their defaultEnvironment
        List<ModuleEntity> findByDefaultEnvironment_Id(Long envId);
+
+       List<ModuleEntity> findByCreatedById(Long createdById);
 }

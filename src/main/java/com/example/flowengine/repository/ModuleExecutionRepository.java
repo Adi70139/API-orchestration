@@ -21,4 +21,7 @@ public interface ModuleExecutionRepository extends JpaRepository<ModuleExecution
     // Most recent execution for a module
     @Query("SELECT me FROM ModuleExecution me WHERE me.module.id = :moduleId ORDER BY me.startedAt DESC LIMIT 1")
     Optional<ModuleExecution> findLatestByModuleId(@Param("moduleId") Long moduleId);
+
+    // All executions for a user's modules, newest first — paginated
+    Page<ModuleExecution> findByModule_CreatedBy_IdOrderByStartedAtDesc(Long createdById, Pageable pageable);
 }
