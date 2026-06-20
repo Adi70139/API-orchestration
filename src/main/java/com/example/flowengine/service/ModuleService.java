@@ -57,11 +57,7 @@ public class ModuleService {
         dto.setId(existingModule.getId());
         dto.setName(existingModule.getName());
         dto.setDescription(existingModule.getDescription());
-        dto.setFlowCount(
-                existingModule.getFlows() != null
-                        ? existingModule.getFlows().size()
-                        : 0
-        );
+        dto.setFlowCount((int) flowRepository.countByModuleId(existingModule.getId()));
 
         return dto;
     }
@@ -83,11 +79,12 @@ public class ModuleService {
                     dto.setId(module.getId());
                     dto.setName(module.getName());
                     dto.setDescription(module.getDescription());
-                    dto.setFlowCount(
-                            module.getFlows() != null
-                                    ? module.getFlows().size()
-                                    : 0
-                    );
+                    // Count via query, not module.getFlows().size() — that's a lazy collection
+                    // and this method has no open Hibernate session when called from the
+                    // assistant's tool-executor thread (a different thread than the original
+                    // request), which throws LazyInitializationException. A count query also
+                    // avoids loading every flow row per module just to call .size() on it.
+                    dto.setFlowCount((int) flowRepository.countByModuleId(module.getId()));
                     return dto;
                 })
                 .toList();

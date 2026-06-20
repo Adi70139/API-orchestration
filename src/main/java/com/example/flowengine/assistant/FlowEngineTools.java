@@ -32,6 +32,21 @@ public class FlowEngineTools {
      * Some LLMs format boolean tool arguments as "<true>"/"<false>" or with extra
      * whitespace/quotes instead of plain true/false. This normalizes all of that.
      */
+    /**
+     * Guards every id-based tool against a null id. Without this, a null Long flows straight
+     * into a repository call (e.g. findById(null)) and JPA throws InvalidDataAccessApiUsageException
+     * deep in Hibernate — a confusing error the LLM has no clean way to recover from, and which
+     * has caused the agent to get stuck retrying the same broken call instead of responding.
+     * Returning a plain string here (rather than throwing) lets the LLM see the problem and
+     * self-correct in the same turn, e.g. by calling listFlows first to resolve a real id.
+     */
+    private String missingId(String paramName, String listToolHint) {
+        return String.format(
+                "ERROR: %s is required and was not provided. Call %s first to resolve the correct id, " +
+                        "then retry this tool with that id. Do not call this tool again with a missing id.",
+                paramName, listToolHint);
+    }
+
     private boolean isConfirmed(String confirmed) {
         if (confirmed == null) return false;
         String normalized = confirmed.trim()
@@ -68,7 +83,11 @@ public class FlowEngineTools {
         return sb.toString();
     }
 
-    @Tool("Create a new module with the given name and optional description.")
+    @Tool("""
+            Create a new module — a workspace/container that holds flows. Use when the user says
+            "create a module called X" or "make a new module named X".
+            NOT for "create a flow/test called X" — that's a different resource, use createFlow.
+            """)
     public String createModule(
             @P("Name of the module to create") String name,
             @P("Optional description of the module") String description) {
@@ -132,6 +151,7 @@ public class FlowEngineTools {
             use getFlowHistory, getStepTrends, or getDependencyGraph for those instead.
             """)
     public String getFlow(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] getFlow id={}", flowId);
         var flow = flowService.getById(flowId);
         StringBuilder sb = new StringBuilder(String.format(
@@ -147,22 +167,45 @@ public class FlowEngineTools {
     }
 
     @Tool("""
-            Create a NEW EMPTY flow from scratch with no steps.
+            Create a NEW EMPTY flow (a test/workflow) with no steps, inside an existing module. Use when the
+            user says "create a flow/test/workflow called X" — flow and module are different resources;
+            use createModule instead if they said "create a module".
             Trigger phrases: "create a new flow", "make a flow called X", "add a flow for Y".
-            NOT for: "copy", "duplicate", "clone" an existing flow — use duplicateFlow for those,
-            since this tool creates an empty flow with zero steps.
+            NOT for: "copy", "duplicate", "clone" an existing flow — use duplicateFlow for those.
+            moduleName MUST be a name the user actually typed or a real name from listModules — never a
+            guessed/placeholder value like "test-module". If unknown, call listModules and ask the user.
             """)
     public String createFlow(
             @P("Name for the new flow") String name,
             @P("Name of the module this flow belongs to") String moduleName,
             @P("Optional description of the flow") String description) {
+        if (moduleName == null || moduleName.isBlank()) {
+            return "ERROR: moduleName is required. Call listModules and ask the user which module " +
+                    "this flow should go in — do not invent a module name.";
+        }
         log.info("[Tool] createFlow name={} module={}", name, moduleName);
         FlowRequest req = new FlowRequest();
         req.setName(name);
         req.setModule(moduleName);
         req.setDescription(description);
-        var created = flowService.create(req);
-        return String.format("Flow created: [id=%d] %s in module '%s'", created.getId(), created.getName(), moduleName);
+        try {
+            var created = flowService.create(req);
+            return String.format("Flow created: [id=%d] %s in module '%s'", created.getId(), created.getName(), moduleName);
+        } catch (IllegalArgumentException e) {
+            // Most commonly: moduleName doesn't match any real module — including the case where
+            // the model invented a plausible-looking name instead of asking the user or checking
+            // listModules. Surface the real module list here so it can self-correct in one round
+            // trip instead of guessing again.
+            log.warn("[Tool] createFlow failed for module='{}': {}", moduleName, e.getMessage());
+            String available = moduleService.getAll().stream()
+                    .map(m -> m.getName())
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("(no modules exist yet)");
+            return String.format(
+                    "ERROR: %s. Available modules: %s. Ask the user to pick one of these, or confirm " +
+                            "creating a new module first — do not retry with another guessed name.",
+                    e.getMessage(), available);
+        }
     }
 
     @Tool("Update a flow's name or description. Requires user confirmation before executing.")
@@ -219,6 +262,7 @@ public class FlowEngineTools {
 
     @Tool("List all steps in a flow, ordered by stepOrder.")
     public String listSteps(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] listSteps flowId={}", flowId);
         var steps = flowStepService.getByFlowId(flowId);
         if (steps.isEmpty()) return "No steps found in flow " + flowId;
@@ -312,6 +356,7 @@ public class FlowEngineTools {
 
     @Tool("List all environments for a module.")
     public String listEnvironments(@P("ID of the module") Long moduleId) {
+        if (moduleId == null) return missingId("moduleId", "listModules");
         log.info("[Tool] listEnvironments moduleId={}", moduleId);
         var envs = environmentService.getByModuleId(moduleId);
         if (envs.isEmpty()) return "No environments found for module " + moduleId;
@@ -346,10 +391,17 @@ public class FlowEngineTools {
 
     // ── Execution ─────────────────────────────────────────────────────────────
 
-    @Tool("Run all steps in a flow sequentially. Returns pass/fail result with step details.")
+    @Tool("""
+            Run/execute all steps in a flow sequentially against a live environment. Returns pass/fail
+            result with step details. This actually performs the HTTP calls — it is the tool for
+            "execute", "run", "trigger", "kick off", or "start" a flow/test/workflow.
+            If you only have a flow name, resolve it via listFlows first, then call this with the id —
+            do not stop after finding the flow without calling this tool.
+            """)
     public String runFlow(
             @P("ID of the flow to run") Long flowId,
             @P("Optional environment ID to use for variable resolution") Long environmentId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] runFlow id={}", flowId);
         var result = executorService.runFlow(flowId, environmentId);
         return String.format("Flow '%s' %s in %dms. %d/%d steps passed.%s",
@@ -361,10 +413,14 @@ public class FlowEngineTools {
                 result.isAllStepsPassed() ? "" : buildFailureSummary(result));
     }
 
-    @Tool("Run all flows in a module sequentially. Returns aggregate pass/fail result.")
+    @Tool("""
+            Run/execute all flows in a module sequentially against a live environment. Returns aggregate
+            pass/fail result. This is the tool for "execute", "run", "trigger" a whole module's flows.
+            """)
     public String runModule(
             @P("ID of the module to run") Long moduleId,
             @P("Optional environment ID to use for variable resolution") Long environmentId) {
+        if (moduleId == null) return missingId("moduleId", "listModules");
         log.info("[Tool] runModule id={}", moduleId);
         var result = executorService.runModule(moduleId, environmentId);
         return String.format("Module '%s' %s in %dms. %d/%d flows passed.",
@@ -398,6 +454,7 @@ public class FlowEngineTools {
             data dependencies between steps (use getDependencyGraph).
             """)
     public String getFlowHistory(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] getFlowHistory flowId={}", flowId);
         var history = trendService.getFlowHistory(flowId);
 
@@ -447,6 +504,7 @@ public class FlowEngineTools {
             data dependencies (use getDependencyGraph).
             """)
     public String getStepTrends(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] getStepTrends flowId={}", flowId);
         var trends = trendService.getStepTrends(flowId);
 
@@ -476,14 +534,16 @@ public class FlowEngineTools {
     }
 
     @Tool("""
-            Show how steps DEPEND ON EACH OTHER via {placeholder} data — which step produces a value
-            and which later step consumes it.
+            Show how steps in an EXISTING flow DEPEND ON EACH OTHER via {placeholder} data — which step produces
+            a value and which later step consumes it. Requires a real flowId.
             Trigger phrases: "dependency", "dependencies", "how are the steps connected",
             "what data does step X depend on", "which steps pass data to each other".
             NOT for: run history (use getFlowHistory), step reliability/flakiness (use getStepTrends),
-            flow structure/step list (use getFlow).
+            flow structure/step list (use getFlow). NOT for general "how do I use placeholders/method output"
+            questions that aren't about a specific flow's existing steps — use explainMethodPlaceholders for those.
             """)
     public String getDependencyGraph(@P("ID of the flow. If you only have a name, call listFlows first to find this id.") Long flowId) {
+        if (flowId == null) return missingId("flowId", "listFlows");
         log.info("[Tool] getDependencyGraph flowId={}", flowId);
         var graph = trendService.getDependencyGraph(flowId);
 
@@ -525,6 +585,7 @@ public class FlowEngineTools {
     public String getModuleRunHistory(
             @P("ID of the module") Long moduleId,
             @P("Number of recent runs to show, default 10") Integer limit) {
+        if (moduleId == null) return missingId("moduleId", "listModules");
         log.info("[Tool] getModuleRunHistory moduleId={}", moduleId);
         int size = (limit != null && limit > 0) ? Math.min(limit, 50) : 10;
         var page = scheduleResultService.getRunHistory(moduleId, 0, size);
@@ -646,7 +707,10 @@ public class FlowEngineTools {
             Explain the placeholder syntax for using custom method output in step URLs, headers, and body.
             ALWAYS use this tool when the user asks about method output placeholders, {method.KEY} syntax,
             or how to pass method results into a step. The syntax is ALWAYS {method.KEY}.
-            Trigger phrases: "how to use method output", "placeholder syntax", "method result in request".
+            This is a GENERAL how-to question, not tied to any specific flow — do NOT call getDependencyGraph
+            for this, it requires a flowId and answers a different question (data flow within one existing flow).
+            Trigger phrases: "how to use method output", "placeholder syntax", "method result in request",
+            "how to use placeholder of custom method", "how do I reference a custom method's result/output".
             """)
     public String explainMethodPlaceholders() {
         return """

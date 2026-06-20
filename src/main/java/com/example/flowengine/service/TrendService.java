@@ -18,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.*;
@@ -38,6 +39,7 @@ public class TrendService {
 
     // ── Execution History ─────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public FlowHistoryDTO getFlowHistory(Long flowId) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
@@ -56,6 +58,7 @@ public class TrendService {
         return dto;
     }
 
+    @Transactional(readOnly = true)
     public List<StepTrendDTO> getStepTrends(Long flowId) {
         List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
         return steps.stream()
@@ -65,6 +68,7 @@ public class TrendService {
 
     // ── Dependency Graph ──────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public DependencyGraphDTO getDependencyGraph(Long flowId) {
         FlowDefinition flow = flowRepository.findById(flowId)
                 .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));

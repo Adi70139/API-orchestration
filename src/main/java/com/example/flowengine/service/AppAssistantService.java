@@ -33,6 +33,15 @@ public class AppAssistantService {
 
     private final FlowEngineAssistant assistant;
 
+    // Bounds the whole chat() call. Even with maxSequentialToolsInvocations capped, a slow
+    // local Ollama model doing several round trips (each with its own 120s model timeout)
+    // can still take minutes. Without an outer bound, the UI just spins forever with no
+    // feedback. 90s is generous enough for a normal multi-tool-call answer but guarantees
+    // the user gets a response instead of an indefinite spinner.
+    private static final java.time.Duration CHAT_TIMEOUT = java.time.Duration.ofSeconds(90);
+    private final java.util.concurrent.ExecutorService chatExecutor =
+            java.util.concurrent.Executors.newCachedThreadPool();
+
     public Map<String, Object> toolCatalog() {
         // Kept for backwards-compatibility with the /assistant/tools endpoint.
         Map<String, Object> tools = new LinkedHashMap<>();
@@ -66,7 +75,20 @@ public class AppAssistantService {
             // LangChain4j handles its own memory internally, but we also accept history
             // from the frontend for stateless/session-less clients.
             String userMessage = buildMessageWithHistory(request);
-            String reply = assistant.chat(userMessage);
+
+            String reply;
+            try {
+                reply = java.util.concurrent.CompletableFuture
+                        .supplyAsync(() -> assistant.chat(userMessage), chatExecutor)
+                        .get(CHAT_TIMEOUT.toSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                log.error("[Assistant] Timed out after {}s — likely a tool-call loop or a stuck model call. message='{}'",
+                        CHAT_TIMEOUT.toSeconds(), request.getMessage());
+                AssistantChatResponse timeoutResponse = new AssistantChatResponse();
+                timeoutResponse.setReply("Sorry, that's taking too long to process. Please try rephrasing your " +
+                        "question, or try again in a moment.");
+                return timeoutResponse;
+            }
             log.info("[Assistant] reply='{}'", reply);
 
             // Wrap in the existing response shape. Since LangChain4j handles tool execution

@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.List;
@@ -107,6 +108,7 @@ public class FlowService {
 
 
     @Cacheable(cacheNames = "flowsByModuleName", key = "#moduleName")
+    @Transactional(readOnly = true)
     public List<FlowDTO> getFlowsByModuleName(String moduleName) {
         log.info("Getting flows by module name: '{}'", moduleName);
         return flowRepository.findByModule_Name(moduleName).stream()
@@ -115,6 +117,7 @@ public class FlowService {
     }
 
     @Cacheable(cacheNames = "flowsAll")
+    @Transactional(readOnly = true)
     public List<FlowDTO> getAll() {
         log.info("Getting all flows from DB");
         return flowRepository.findAll().stream()
@@ -123,6 +126,7 @@ public class FlowService {
     }
 
     @Cacheable(cacheNames = "flowDetails", key = "#id")
+    @Transactional(readOnly = true)
     public FlowDetailedDTO getById(Long id) {
         log.info("Getting flow by id: {}", id);
         FlowDefinition flow = flowRepository.findById(id)

@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
@@ -35,6 +36,7 @@ public class ScheduleResultService {
     /**
      * Paginated list of execution runs for a module — newest first.
      */
+    @Transactional(readOnly = true)
     public Page<ModuleExecutionSummaryDTO> getRunHistory(Long moduleId, int page, int size) {
         moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
@@ -47,6 +49,7 @@ public class ScheduleResultService {
     /**
      * Full detail for a single module execution run.
      */
+    @Transactional(readOnly = true)
     public ModuleExecutionDetailDTO getRunDetail(Long moduleExecutionId) {
         ModuleExecution execution = moduleExecutionRepository.findById(moduleExecutionId)
                 .orElseThrow(() -> new IllegalArgumentException("Module execution not found: " + moduleExecutionId));
@@ -56,6 +59,7 @@ public class ScheduleResultService {
     /**
      * Most recent run summary for a module — useful for the UI status card.
      */
+    @Transactional(readOnly = true)
     public Optional<ModuleExecutionSummaryDTO> getLastRun(Long moduleId) {
         moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));

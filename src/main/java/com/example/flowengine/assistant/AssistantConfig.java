@@ -45,6 +45,11 @@ public class AssistantConfig {
                     "(e.g. which module, what HTTP method) -> ask for that field instead of guessing a default.\n" +
                     "It is always better to ask one short question than to execute the wrong tool or create/modify " +
                     "the wrong resource.\n\n" +
+                    "NEVER INVENT PLACEHOLDER VALUES: if a tool needs a parameter the user didn't give you and you " +
+                    "cannot resolve it from a list/get tool result, do NOT make up a plausible-sounding value " +
+                    "(e.g. 'test-module', 'default', 'example-flow') just so you have something to pass. Calling a " +
+                    "tool with an invented value is worse than asking — it can create real, wrongly-named resources " +
+                    "or fail with a confusing error. Either call a list tool to find the real value, or ask the user.\n\n" +
                     "TOOL USE RULES:\n" +
                     "- READ operations (list, get): call immediately, no confirmation needed.\n" +
                     "- CREATE operations: call immediately, no confirmation needed.\n" +
@@ -149,5 +154,11 @@ public class AssistantConfig {
                 .systemMessageProvider(memoryId -> SYSTEM_PROMPT)
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(30))
                 .build();
+        // Note: langchain4j 0.36.0's AiServices.Builder has no built-in cap on sequential
+        // tool-call rounds. The outer CHAT_TIMEOUT in AppAssistantService (90s) is what
+        // actually prevents the UI from hanging if the model gets stuck in a tool-call loop —
+        // that's the real fix for the reported symptom. If you upgrade langchain4j later,
+        // check the changelog for a loop-limit option (it exists in newer 1.x releases under
+        // a different builder method name) and add it back as defense-in-depth.
     }
 }

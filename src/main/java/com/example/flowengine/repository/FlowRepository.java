@@ -1,4 +1,3 @@
-
 package com.example.flowengine.repository;
 
 import com.example.flowengine.entity.FlowDefinition;
@@ -8,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface FlowRepository extends JpaRepository<FlowDefinition, Long> {
+
+    long countByModuleId(Long moduleId);
 
     List<FlowDefinition> findByModuleId(Long moduleId);
 
