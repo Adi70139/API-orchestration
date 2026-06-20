@@ -179,6 +179,86 @@ public class FlowStepService {
         return flowStepRepository.save(duplicate);
     }
 
+    /**
+     * Promotes one of a step's payload variants (e.g. captured by HAR import when the same
+     * endpoint was hit with different bodies) into its own standalone step appended to the flow.
+     * The new step is a full copy of the source step's config (headers, retries, assertions,
+     * skip condition) but with bodyJson set to the chosen variant's body. It does NOT carry
+     * the variants list forward — it's a single concrete step now, not a multi-variant template —
+     * and does NOT inherit bodySourceStepId, since it has its own explicit body.
+     */
+    @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
+    public FlowStep createFromVariant(Long flowId, Long stepId, com.example.flowengine.DTO.CreateStepFromVariantRequest request) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found with id: " + flowId));
+
+        FlowStep source = getById(stepId);
+        if (!source.getFlow().getId().equals(flowId)) {
+            throw new IllegalArgumentException("FlowStep with id " + stepId + " does not belong to flow: " + flowId);
+        }
+
+        if (source.getPayloadVariantsJson() == null || source.getPayloadVariantsJson().isBlank()) {
+            throw new IllegalArgumentException("Step " + stepId + " has no payload variants to create a step from");
+        }
+
+        List<FlowStepRequest.PayloadVariant> variants;
+        try {
+            variants = objectMapper.readValue(source.getPayloadVariantsJson(),
+                    new com.fasterxml.jackson.core.type.TypeReference<List<FlowStepRequest.PayloadVariant>>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Step " + stepId + " has malformed payload variants: " + e.getMessage());
+        }
+
+        FlowStepRequest.PayloadVariant chosen = null;
+        if (request.getVariantName() != null && !request.getVariantName().isBlank()) {
+            chosen = variants.stream()
+                    .filter(v -> request.getVariantName().equals(v.getName()))
+                    .findFirst()
+                    .orElse(null);
+        } else if (request.getVariantIndex() != null) {
+            int idx = request.getVariantIndex();
+            if (idx < 0 || idx >= variants.size()) {
+                throw new IllegalArgumentException(
+                        "variantIndex " + idx + " out of range — step has " + variants.size() + " variant(s)");
+            }
+            chosen = variants.get(idx);
+        }
+
+        if (chosen == null) {
+            throw new IllegalArgumentException("No matching variant found for step " + stepId +
+                    ". Available variants: " + variants.stream().map(FlowStepRequest.PayloadVariant::getName).toList());
+        }
+
+        Integer maxOrder = flowStepRepository.findMaxStepOrderByFlowId(flowId);
+        String newName = (request.getName() != null && !request.getName().isBlank())
+                ? request.getName()
+                : source.getName() + " (" + chosen.getName() + ")";
+
+        FlowStep newStep = new FlowStep();
+        newStep.setFlow(flow);
+        newStep.setName(newName);
+        newStep.setStepOrder(maxOrder + 1);
+        newStep.setDescription(source.getDescription());
+        newStep.setMethod(source.getMethod());
+        newStep.setUrl(source.getUrl());
+        newStep.setHeadersJson(source.getHeadersJson());
+        newStep.setBodyJson(chosen.getBodyJson());
+        newStep.setRetryCount(source.getRetryCount());
+        newStep.setRetryDelayMs(source.getRetryDelayMs());
+        newStep.setInitialDelayMs(source.getInitialDelayMs());
+        newStep.setPollUntilSuccess(source.getPollUntilSuccess());
+        newStep.setPollIntervalMs(source.getPollIntervalMs());
+        newStep.setPollMaxAttempts(source.getPollMaxAttempts());
+        newStep.setPollExpectedStatus(source.getPollExpectedStatus());
+        newStep.setAssertionsJson(source.getAssertionsJson());
+        newStep.setSkipConditionJson(source.getSkipConditionJson());
+
+        log.info("[FlowStepService] Creating step '{}' (order {}) from variant '{}' of step id={} in flow id={}",
+                newName, newStep.getStepOrder(), chosen.getName(), stepId, flowId);
+
+        return flowStepRepository.save(newStep);
+    }
+
     @CacheEvict(cacheNames = {"flowDetails", "stepsByFlow", "stepsById"}, allEntries = true)
     public void delete(Long stepId) {
         FlowStep step = getById(stepId);

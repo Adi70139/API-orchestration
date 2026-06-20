@@ -68,6 +68,17 @@ public class FlowStepController {
         return flowStepService.duplicate(flowId, stepId, request);
     }
 
+    @PostMapping("/{stepId}/variants/create-step")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Create a step from a payload variant",
+            description = "Promotes one of a step's payload variants (e.g. captured by HAR import when the " +
+                    "same endpoint was hit with different bodies) into its own standalone step appended to the flow")
+    public FlowStep createStepFromVariant(@PathVariable Long flowId,
+                                          @PathVariable Long stepId,
+                                          @Valid @RequestBody com.example.flowengine.DTO.CreateStepFromVariantRequest request) {
+        return flowStepService.createFromVariant(flowId, stepId, request);
+    }
+
     @DeleteMapping("/{stepId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Delete a step", description = "Delete a step by flow id")

@@ -78,10 +78,12 @@ groq:
   model: ${GROQ_MODEL:llama-3.3-70b-versatile}
 
 # Ollama kept as fallback — set LLM_PROVIDER=ollama to use it.
-# Requires a tool-calling model: ollama pull llama3.1
+# Requires a model that's reliable at verbatim copy-from-context + strict JSON.
+# llama3.1:8b tends to invent locators instead of copying them — prefer qwen2.5:14b-instruct
+# (or qwen2.5:32b-instruct if you have the VRAM). Run: ollama pull qwen2.5:14b-instruct
 ollama:
   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-  model: ${OLLAMA_MODEL:llama3.1}
+  model: ${OLLAMA_MODEL:qwen2.5:14b-instruct}
 
 # UI Automation — Playwright
 # headless=false shows the browser window during scraping/generation (good for local dev)

@@ -48,6 +48,9 @@ public class UIAutomationService {
     @Value("${groq.model:llama-3.3-70b-versatile}")
     String groqModel;
 
+    @Value("${groq.max-tokens:4000}")
+    int groqMaxTokens;
+
     @Value("${llm.provider:ollama}")
     String llmProvider;
 
@@ -56,6 +59,9 @@ public class UIAutomationService {
 
     @Value("${ollama.model:llama3.1}")
     String ollamaModel;
+
+    @Value("${ollama.num-predict:4096}")
+    int ollamaNumPredict;
 
     /** Injected JS that walks the DOM and returns interactive elements with best locators. */
     static final String SCRAPE_JS = """
@@ -152,11 +158,14 @@ public class UIAutomationService {
         } catch (Exception e) {
             log.warn("[UIAutomation] scrapeCurrentPage failed: {}", e.getMessage());
         }
+        log.info("[UIAutomation] scrapeCurrentPage → {} elements with a usable locator", elements.size());
         return elements;
     }
 
     public UIAutomationResult generateAutomation(UIAutomationRequest request) throws Exception {
         log.info("[UIAutomation] Starting for url={} module={}", request.getUrl(), request.getModuleName());
+        log.info("[UIAutomation] LLM provider={} model={}", llmProvider,
+                "ollama".equalsIgnoreCase(llmProvider) ? ollamaModel : groqModel);
 
         try (Playwright playwright = Playwright.create()) {
             BrowserType.LaunchOptions opts = new BrowserType.LaunchOptions().setHeadless(headless);
@@ -217,6 +226,11 @@ public class UIAutomationService {
         // ── Phase 1: Initial scrape + full plan from LLM ────────────────────
         List<UIAutomationResult.ExtractedElement> initialElements = scrapeCurrentPage(page);
         log.info("[UIAutomation] Phase 1 — scraped {} elements from {}", initialElements.size(), page.url());
+
+        if (initialElements.isEmpty()) {
+            log.warn("[UIAutomation] Phase 1 — SCRAPE_JS found 0 interactive elements on {}. " +
+                    "Any locator the LLM returns for this page will be hallucinated.", page.url());
+        }
 
         List<AutomationStep> plan = buildFullPlan(request.getSteps(), initialElements, page.url());
         log.info("[UIAutomation] Phase 1 — LLM returned {} steps, checking for nulls", plan.size());
@@ -286,6 +300,26 @@ public class UIAutomationService {
     private List<AutomationStep> resolveNullLocators(Page page, List<AutomationStep> plan,
                                                      UIAutomationRequest request,
                                                      int depth) throws Exception {
+        return resolveNullLocators(page, plan, request, depth, -1);
+    }
+
+    /**
+     * @param lastExecutedClickIndex index of the last "click" step that has already been
+     *                                executed in the CURRENT browser state, across recursive
+     *                                calls. -1 means nothing executed yet (fresh browser/page).
+     *                                Steps up to and including this index are NOT replayed —
+     *                                the browser is already past them. Re-navigating to baseUrl
+     *                                and replaying from step 0 on every recursion is what broke
+     *                                multi-page flows: once authenticated, re-navigating to a
+     *                                login URL can auto-redirect past the login form entirely,
+     *                                so the "replayed" fill/click steps fail (field doesn't
+     *                                exist) while the page still ends up in the right place by
+     *                                accident — masking the bug until the app's redirect
+     *                                behavior changes.
+     */
+    private List<AutomationStep> resolveNullLocators(Page page, List<AutomationStep> plan,
+                                                     UIAutomationRequest request,
+                                                     int depth, int lastExecutedClickIndex) throws Exception {
         if (depth >= MAX_RESOLUTION_LOOPS) {
             log.warn("[UIAutomation] Max resolution loops ({}) reached", MAX_RESOLUTION_LOOPS);
             return plan;
@@ -323,28 +357,46 @@ public class UIAutomationService {
             return plan; // nothing we can do
         }
 
-        log.info("[UIAutomation] Executing steps 1-{} in browser to reach page with new elements",
-                clickIndex + 1);
+        if (clickIndex <= lastExecutedClickIndex) {
+            // Browser is already past this point from a previous resolution loop — don't
+            // re-navigate or replay. Re-navigating here is what caused the multi-page bug:
+            // it can silently redirect past an already-completed login/step sequence.
+            log.info("[UIAutomation] clickIndex {} already executed in this browser session — " +
+                    "reusing current state, no replay", clickIndex + 1);
+        } else {
+            int replayFrom = lastExecutedClickIndex + 1;
+            log.info("[UIAutomation] Executing steps {}-{} in browser to reach page with new elements",
+                    replayFrom + 1, clickIndex + 1);
 
-        // Execute steps 0..clickIndex in the browser
-        String baseUrl = plan.get(0).url != null ? plan.get(0).url : request.getUrl();
-        page.navigate(baseUrl);
-        try { page.waitForLoadState(LoadState.NETWORKIDLE,
-                new Page.WaitForLoadStateOptions().setTimeout(5000)); }
-        catch (Exception ignored) {}
-
-        for (int i = 0; i <= clickIndex; i++) {
-            AutomationStep s = plan.get(i);
-            if ("navigate".equalsIgnoreCase(s.action)) continue; // already navigated
-            try {
-                playwrightExecutorService.dispatch(page, s);
+            if (lastExecutedClickIndex == -1) {
+                // First time touching the browser for this flow — start from the real beginning.
+                String baseUrl = plan.get(0).url != null ? plan.get(0).url : request.getUrl();
+                page.navigate(baseUrl);
                 try { page.waitForLoadState(LoadState.NETWORKIDLE,
-                        new Page.WaitForLoadStateOptions().setTimeout(3000)); }
+                        new Page.WaitForLoadStateOptions().setTimeout(5000)); }
                 catch (Exception ignored) {}
-                if (s.waitAfterMs != null && s.waitAfterMs > 0) page.waitForTimeout(s.waitAfterMs);
-            } catch (Exception e) {
-                log.warn("[UIAutomation] Step {} failed during resolution: {}", i + 1, e.getMessage());
             }
+
+            for (int i = replayFrom; i <= clickIndex; i++) {
+                AutomationStep s = plan.get(i);
+                if ("navigate".equalsIgnoreCase(s.action)) continue; // already navigated
+                try {
+                    playwrightExecutorService.dispatch(page, s);
+                    try { page.waitForLoadState(LoadState.NETWORKIDLE,
+                            new Page.WaitForLoadStateOptions().setTimeout(3000)); }
+                    catch (Exception ignored) {}
+                    if (s.waitAfterMs != null && s.waitAfterMs > 0) page.waitForTimeout(s.waitAfterMs);
+                } catch (Exception e) {
+                    log.warn("[UIAutomation] Step {} ('{}') failed during resolution — aborting replay, " +
+                                    "remaining steps in this batch depend on it: {}",
+                            i + 1, s.description, e.getMessage());
+                    // Stop here instead of continuing to fill/click against a page that never
+                    // reached the expected state — chaining onward just produces more failures
+                    // and a misleading "it eventually landed on the right page" result.
+                    break;
+                }
+            }
+            lastExecutedClickIndex = clickIndex;
         }
 
         // Scrape the resulting page
@@ -371,7 +423,7 @@ public class UIAutomationService {
         merged.addAll(resolvedTail);
 
         // Recurse in case there are more nulls further down
-        return resolveNullLocators(page, merged, request, depth + 1);
+        return resolveNullLocators(page, merged, request, depth + 1, lastExecutedClickIndex);
     }
 
     /**
@@ -417,8 +469,8 @@ public class UIAutomationService {
                 - Prefer getByRole over getByText for buttons/links.
                 """.formatted(currentUrl, elementList, nlSteps);
 
-        String responseJson = callLLM(prompt);
-        return objectMapper.readValue(responseJson, new TypeReference<>() {});
+        List<AutomationStep> steps = callAndParseAutomationSteps(prompt, "buildFullPlan");
+        return enforceLocatorWhitelist(steps, elements, "buildFullPlan");
     }
 
     /**
@@ -434,11 +486,7 @@ public class UIAutomationService {
                 elementList.append("  - ").append(e.getDescription())
                         .append(" → ").append(e.getBestLocator()).append("\n"));
 
-        StringBuilder existingSteps = new StringBuilder();
-        stepsToFill.forEach(s -> existingSteps.append(String.format(
-                "  {action: %s, locator: %s, value: %s, description: %s}\n",
-                s.action, s.locator == null ? "NULL — NEEDS FILLING" : s.locator,
-                s.value, s.description)));
+        String existingSteps = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(stepsToFill);
 
         String prompt = """
                 You are a Playwright test automation expert. The browser has navigated to a new page
@@ -449,6 +497,9 @@ public class UIAutomationService {
                 INTERACTIVE ELEMENTS ON THIS PAGE:
                 %s
 
+                UNRESOLVED USER INTENT (for context):
+                %s
+
                 STEPS TO COMPLETE (fill in NULL locators only, keep non-null ones unchanged):
                 %s
 
@@ -456,10 +507,11 @@ public class UIAutomationService {
                 For steps with locator=NULL: assign the correct locator from the elements list above.
                 For steps with existing locators: keep them exactly as-is.
                 For assertVisible/assertText with locator=NULL: keep null, ensure value is set.
-                """.formatted(currentUrl, elementList, existingSteps);
+                Ensure every string value is valid JSON (double-quoted), including locator values like getByLabel(...).
+                """.formatted(currentUrl, elementList, remainingNL, existingSteps);
 
-        String responseJson = callLLM(prompt);
-        return objectMapper.readValue(responseJson, new TypeReference<>() {});
+        List<AutomationStep> steps = callAndParseAutomationSteps(prompt, "fillNullLocators");
+        return enforceLocatorWhitelist(steps, elements, "fillNullLocators");
     }
 
     private boolean isAssertOrNavigate(String action) {
@@ -469,6 +521,53 @@ public class UIAutomationService {
                  "waitforurl", "screenshot" -> true;
             default -> false;
         };
+    }
+
+    /**
+     * Guards against LLM hallucination. The prompt tells the model to only use locators
+     * from the scraped element list, but that's not enforced by anything — small/local
+     * models in particular will happily invent a plausible-looking locator
+     * (e.g. getByRole("input", { name: "Input field" })) when nothing in the list is a
+     * clean match. "input" isn't even a valid ARIA role, which is a giveaway it was
+     * fabricated rather than copied.
+     *
+     * Any non-null locator that doesn't exactly match a bestLocator we actually scraped
+     * is discarded (set to null) so it falls through to resolveNullLocators instead of
+     * being baked into the generated script and failing at runtime with a 30s timeout.
+     */
+    private List<AutomationStep> enforceLocatorWhitelist(List<AutomationStep> steps,
+                                                         List<UIAutomationResult.ExtractedElement> elements,
+                                                         String phase) {
+        Set<String> validLocators = new HashSet<>();
+        for (UIAutomationResult.ExtractedElement e : elements) {
+            if (e.getBestLocator() != null && !e.getBestLocator().isBlank()) {
+                validLocators.add(e.getBestLocator());
+            }
+        }
+
+        int invented = 0;
+        for (AutomationStep s : steps) {
+            if (s.locator == null || s.locator.isBlank()) continue;
+            if (isAssertOrNavigate(s.action)) continue; // these legitimately don't need a scraped locator
+
+            if (!validLocators.contains(s.locator)) {
+                log.warn("[UIAutomation][{}] Discarding hallucinated locator — not present in scraped elements. " +
+                                "step='{}' action={} invented_locator={}",
+                        phase, s.description, s.action, s.locator);
+                s.locator = null;
+                invented++;
+            }
+        }
+
+        if (invented > 0) {
+            log.warn("[UIAutomation][{}] {}/{} step(s) had locators not found in the scraped element list — " +
+                            "reset to null so resolveNullLocators can re-resolve them against real page state",
+                    phase, invented, steps.size());
+        } else {
+            log.info("[UIAutomation][{}] All {} non-null locators validated against scraped elements", phase, steps.size());
+        }
+
+        return steps;
     }
 
     private void applyAuth(BrowserContext ctx, UIAutomationRequest request) {
@@ -501,7 +600,12 @@ public class UIAutomationService {
 
     String callOllama(String prompt) throws Exception {
         String body = objectMapper.writeValueAsString(
-                Map.of("model", ollamaModel, "prompt", prompt, "stream", false));
+                Map.of(
+                        "model", ollamaModel,
+                        "prompt", prompt,
+                        "stream", false,
+                        "options", Map.of("num_predict", ollamaNumPredict)
+                ));
         Request req = new Request.Builder()
                 .url(ollamaBaseUrl + "/api/generate")
                 .post(RequestBody.create(body, JSON))
@@ -509,9 +613,9 @@ public class UIAutomationService {
         try (Response response = okHttpClient.newCall(req).execute()) {
             if (!response.isSuccessful()) throw new RuntimeException("Ollama error: HTTP " + response.code());
             String content = objectMapper.readTree(response.body().string()).path("response").asText();
-            
-            // Strip markdown fences
-            content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
+
+            // Normalize common LLM wrappers and keep only the JSON payload.
+            content = extractJsonPayload(content);
             log.info("[UIAutomation] Ollama response: {}", content.substring(0, Math.min(200, content.length())));
             return content;
         }
@@ -526,7 +630,7 @@ public class UIAutomationService {
         String requestBody = objectMapper.writeValueAsString(Map.of(
                 "model", groqModel,
                 "temperature", 0.1,
-                "max_tokens", 2000,
+                "max_tokens", groqMaxTokens,
                 "messages", List.of(Map.of("role", "user", "content", prompt))
         ));
 
@@ -539,16 +643,271 @@ public class UIAutomationService {
 
         try (Response response = okHttpClient.newCall(req).execute()) {
             if (!response.isSuccessful()) throw new RuntimeException("Groq error: HTTP " + response.code() + ": " + response.body().string());
-            
+
             var respNode = objectMapper.readTree(response.body().string());
             String content = respNode.at("/choices/0/message/content").asText();
 
-            // Strip markdown fences if model wrapped in them anyway
-            content = content.replaceAll("(?s)```json\\s*", "").replaceAll("(?s)```\\s*", "").trim();
+            // Normalize common LLM wrappers and keep only the JSON payload.
+            content = extractJsonPayload(content);
 
             log.info("[UIAutomation] LLM response: {}", content.substring(0, Math.min(200, content.length())));
             return content;
         }
+    }
+
+    private String extractJsonPayload(String raw) {
+        if (raw == null) return "";
+
+        String content = raw
+                .replaceAll("(?s)```json\\s*", "")
+                .replaceAll("(?s)```\\s*", "")
+                .trim();
+
+        int objectStart = content.indexOf('{');
+        int arrayStart = content.indexOf('[');
+        int start = firstNonNegativeMin(objectStart, arrayStart);
+        if (start < 0) {
+            return content;
+        }
+
+        char open = content.charAt(start);
+        char close = (open == '{') ? '}' : ']';
+        int end = findMatchingJsonEnd(content, start, open, close);
+        if (end < 0) {
+            return content.substring(start).trim();
+        }
+        return content.substring(start, end + 1).trim();
+    }
+
+    private List<AutomationStep> parseAutomationSteps(String responseJson, String phase) throws Exception {
+        try {
+            return objectMapper.readValue(responseJson, new TypeReference<>() {});
+        } catch (Exception first) {
+            String repaired = repairJsonLikeSteps(responseJson);
+            if (!repaired.equals(responseJson)) {
+                log.warn("[UIAutomation] {} returned non-strict JSON, applying repair", phase);
+                return objectMapper.readValue(repaired, new TypeReference<>() {});
+            }
+            throw first;
+        }
+    }
+
+    private List<AutomationStep> callAndParseAutomationSteps(String prompt, String phase) throws Exception {
+        Exception lastError = null;
+        String responseJson = "";
+
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            String effectivePrompt = attempt == 1
+                    ? prompt
+                    : prompt + """
+
+                    IMPORTANT: Your previous response was truncated.
+                    Return the FULL JSON array from start to end in a single response.
+                    Do not omit any step. Do not add explanation.
+                    """;
+
+            responseJson = callLLM(effectivePrompt);
+            try {
+                return parseAutomationSteps(responseJson, phase + "#attempt" + attempt);
+            } catch (Exception e) {
+                lastError = e;
+                if (attempt == 2 || !isLikelyTruncatedJson(e, responseJson)) {
+                    throw e;
+                }
+                log.warn("[UIAutomation] {} response looks truncated, retrying once", phase);
+            }
+        }
+
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new IllegalStateException("Failed to parse automation steps for " + phase);
+    }
+
+    private boolean isLikelyTruncatedJson(Exception error, String payload) {
+        String msg = error.getMessage() == null ? "" : error.getMessage().toLowerCase();
+        String text = payload == null ? "" : payload.trim();
+
+        boolean parserHintsTruncation = msg.contains("unexpected end-of-input")
+                || msg.contains("unexpected end")
+                || msg.contains("end-of-input")
+                || msg.contains("was expecting") && msg.contains("end");
+
+        boolean endsAbruptly = (text.startsWith("[") && !text.endsWith("]"))
+                || (text.startsWith("{") && !text.endsWith("}"));
+
+        return parserHintsTruncation || endsAbruptly;
+    }
+
+    private String repairJsonLikeSteps(String jsonish) {
+        if (jsonish == null || jsonish.isBlank()) return jsonish;
+        String repaired = jsonish;
+        repaired = quoteUnquotedStringFieldValues(repaired, "action");
+        repaired = quoteUnquotedStringFieldValues(repaired, "locator");
+        repaired = quoteUnquotedStringFieldValues(repaired, "value");
+        repaired = quoteUnquotedStringFieldValues(repaired, "url");
+        repaired = quoteUnquotedStringFieldValues(repaired, "description");
+        return repaired;
+    }
+
+    private String quoteUnquotedStringFieldValues(String input, String fieldName) {
+        String keyToken = "\"" + fieldName + "\"";
+        StringBuilder sb = new StringBuilder(input);
+        int from = 0;
+
+        while (from < sb.length()) {
+            int keyStart = sb.indexOf(keyToken, from);
+            if (keyStart < 0) break;
+
+            int colon = indexOfColon(sb, keyStart + keyToken.length());
+            if (colon < 0) break;
+
+            int valueStart = skipWhitespace(sb, colon + 1);
+            if (valueStart >= sb.length()) break;
+
+            char ch = sb.charAt(valueStart);
+            if (ch == '"' || ch == '{' || ch == '[' || ch == '-' || Character.isDigit(ch)) {
+                from = valueStart + 1;
+                continue;
+            }
+            if (startsWithKeyword(sb, valueStart, "true") ||
+                    startsWithKeyword(sb, valueStart, "false") ||
+                    startsWithKeyword(sb, valueStart, "null")) {
+                from = valueStart + 1;
+                continue;
+            }
+
+            int valueEnd = scanBareValueEnd(sb, valueStart);
+            String raw = sb.substring(valueStart, valueEnd).trim();
+            if (raw.isEmpty()) {
+                from = valueEnd + 1;
+                continue;
+            }
+
+            String replacement;
+            if ("null".equalsIgnoreCase(raw)) {
+                replacement = "null";
+            } else {
+                try {
+                    replacement = objectMapper.writeValueAsString(raw);
+                } catch (Exception e) {
+                    replacement = "\"" + esc(raw) + "\"";
+                }
+            }
+
+            sb.replace(valueStart, valueEnd, replacement);
+            from = valueStart + replacement.length();
+        }
+        return sb.toString();
+    }
+
+    private int indexOfColon(StringBuilder sb, int from) {
+        for (int i = from; i < sb.length(); i++) {
+            char ch = sb.charAt(i);
+            if (ch == ':') return i;
+            if (!Character.isWhitespace(ch)) return -1;
+        }
+        return -1;
+    }
+
+    private int skipWhitespace(StringBuilder sb, int from) {
+        int i = from;
+        while (i < sb.length() && Character.isWhitespace(sb.charAt(i))) i++;
+        return i;
+    }
+
+    private boolean startsWithKeyword(StringBuilder sb, int from, String keyword) {
+        if (from + keyword.length() > sb.length()) return false;
+        for (int i = 0; i < keyword.length(); i++) {
+            if (Character.toLowerCase(sb.charAt(from + i)) != keyword.charAt(i)) return false;
+        }
+        int end = from + keyword.length();
+        return end >= sb.length() || !Character.isLetterOrDigit(sb.charAt(end));
+    }
+
+    private int scanBareValueEnd(StringBuilder sb, int from) {
+        int parenDepth = 0;
+        int braceDepth = 0;
+        int bracketDepth = 0;
+        boolean inString = false;
+        boolean escaping = false;
+
+        for (int i = from; i < sb.length(); i++) {
+            char ch = sb.charAt(i);
+
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (ch == '\\') {
+                    escaping = true;
+                } else if (ch == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch == '"') {
+                inString = true;
+                continue;
+            }
+
+            if (ch == '(') parenDepth++;
+            else if (ch == ')') parenDepth = Math.max(0, parenDepth - 1);
+            else if (ch == '{') braceDepth++;
+            else if (ch == '}') {
+                if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0) return i;
+                braceDepth = Math.max(0, braceDepth - 1);
+            } else if (ch == '[') bracketDepth++;
+            else if (ch == ']') {
+                if (parenDepth == 0 && braceDepth == 0 && bracketDepth == 0) return i;
+                bracketDepth = Math.max(0, bracketDepth - 1);
+            } else if (ch == ',' && parenDepth == 0 && braceDepth == 0 && bracketDepth == 0) {
+                return i;
+            }
+        }
+        return sb.length();
+    }
+
+    private int firstNonNegativeMin(int a, int b) {
+        if (a < 0) return b;
+        if (b < 0) return a;
+        return Math.min(a, b);
+    }
+
+    private int findMatchingJsonEnd(String content, int start, char open, char close) {
+        int depth = 0;
+        boolean inString = false;
+        boolean escaping = false;
+
+        for (int i = start; i < content.length(); i++) {
+            char ch = content.charAt(i);
+
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (ch == '\\') {
+                    escaping = true;
+                } else if (ch == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch == '"') {
+                inString = true;
+                continue;
+            }
+
+            if (ch == open) {
+                depth++;
+            } else if (ch == close) {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     // ── Playwright script generation ──────────────────────────────────────────
