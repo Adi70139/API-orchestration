@@ -108,6 +108,31 @@ public class BrowserRecordingController {
     }
 
     /**
+     * Pause an active recording — browser stays open, capture is suspended.
+     * POST /record/{sessionId}/pause
+     */
+    @PostMapping("/{sessionId}/pause")
+    @Operation(
+            summary = "Pause recording",
+            description = "Suspends capture without closing the browser or losing what's already been " +
+                    "recorded. Use this to navigate, log in, or click around without those actions " +
+                    "becoming flow steps. Call /resume to continue capturing."
+    )
+    public RecordingSession pause(@PathVariable String sessionId) {
+        return recordingService.pause(sessionId);
+    }
+
+    /**
+     * Resume a paused recording.
+     * POST /record/{sessionId}/resume
+     */
+    @PostMapping("/{sessionId}/resume")
+    @Operation(summary = "Resume recording", description = "Resumes capture on a paused recording session.")
+    public RecordingSession resume(@PathVariable String sessionId) {
+        return recordingService.resume(sessionId);
+    }
+
+    /**
      * Discard a recording session without importing.
      * DELETE /record/{sessionId}
      */

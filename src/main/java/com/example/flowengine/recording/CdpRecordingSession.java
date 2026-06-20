@@ -51,6 +51,7 @@ class CdpRecordingSession {
     private WebSocket webSocket;
     private Process chromeProcess;
     private volatile String status = "STARTING";
+    private volatile boolean paused = false;
 
     CdpRecordingSession(RecordingStartRequest options, ObjectMapper objectMapper) {
         this.options = options;
@@ -106,6 +107,35 @@ class CdpRecordingSession {
         return status;
     }
 
+    boolean isPaused() {
+        return paused;
+    }
+
+    /**
+     * Pauses capture without closing the browser or the CDP connection — the user keeps
+     * navigating/clicking normally, but none of it is recorded until resume() is called.
+     * This lets a user step away, log in, dismiss a cookie banner, or do anything else they
+     * don't want showing up as flow steps, without having to stop and restart the whole session
+     * (which would lose everything captured so far).
+     */
+    void pause() {
+        if (!"RECORDING".equals(status)) {
+            throw new IllegalStateException("Cannot pause — recording is " + status + ", not RECORDING");
+        }
+        paused = true;
+        status = "PAUSED";
+        log.info("[CDP] Recording paused — capture suspended, browser stays open");
+    }
+
+    void resume() {
+        if (!"PAUSED".equals(status)) {
+            throw new IllegalStateException("Cannot resume — recording is " + status + ", not PAUSED");
+        }
+        paused = false;
+        status = "RECORDING";
+        log.info("[CDP] Recording resumed");
+    }
+
     void stop() {
         status = "STOPPING";
         try {
@@ -155,14 +185,14 @@ class CdpRecordingSession {
         command.add("--no-first-run");
         command.add("--no-default-browser-check");
         command.add("about:blank");
-        
+
         if (Boolean.parseBoolean(System.getenv("UI_AUTOMATION_HEADLESS"))) {
             command.add("--headless=new");
             command.add("--no-sandbox");
             command.add("--disable-gpu");
             command.add("--disable-dev-shm-usage");
         }
-        
+
         return new ProcessBuilder(command).start();
     }
 
@@ -178,7 +208,7 @@ class CdpRecordingSession {
                 return candidate;
             }
         }
-        
+
         // Fallback: Use Playwright's downloaded Chromium if available
         try {
             try (com.microsoft.playwright.Playwright playwright = com.microsoft.playwright.Playwright.create()) {
@@ -344,6 +374,9 @@ class CdpRecordingSession {
     }
 
     private void onRequestWillBeSent(JsonNode params) {
+        if (paused) {
+            return;
+        }
         JsonNode request = params.path("request");
         String url = request.path("url").asText();
         if (!shouldRecord(url)) {

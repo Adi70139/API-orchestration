@@ -35,6 +35,14 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", ex.getMessage()));
     }
 
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
+        // e.g. trying to pause a recording that isn't RECORDING, or resume one that isn't PAUSED —
+        // a conflict with current state, not a bad request body, so 409 rather than 400/500.
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
 //    @ExceptionHandler(MethodArgumentNotValidException.class)
 //    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
 //        Map<String, Object> errors = new HashMap<>();

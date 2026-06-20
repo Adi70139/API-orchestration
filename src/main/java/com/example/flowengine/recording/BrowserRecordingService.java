@@ -49,6 +49,22 @@ public class BrowserRecordingService {
                 .toList();
     }
 
+    // ─── Pause / Resume ───────────────────────────────────────────────────────
+
+    public RecordingSession pause(String id) {
+        ManagedRecording r = require(id);
+        r.session().pause();
+        log.info("Recording paused: id={}", id);
+        return toSession(id, r.request(), r.session());
+    }
+
+    public RecordingSession resume(String id) {
+        ManagedRecording r = require(id);
+        r.session().resume();
+        log.info("Recording resumed: id={}", id);
+        return toSession(id, r.request(), r.session());
+    }
+
     // ─── Stop + import ────────────────────────────────────────────────────────
 
     /**
