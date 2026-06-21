@@ -67,6 +67,24 @@ bulk:
   executor:
     thread-pool-size: ${BULK_EXECUTOR_POOL_SIZE:10}
 
+flow-executor:
+  # API flows: lightweight, IO-bound (mostly waiting on HTTP responses, not CPU).
+  # IO-bound work can run far more concurrent threads than CPU cores without contention,
+  # since most threads are blocked waiting on the network, not competing for CPU time.
+  # Default formula: cores * 4 (a conservative IO-bound multiplier — tune up if profiling
+  # shows threads are mostly idle/waiting, tune down if you see CPU saturation instead).
+  api:
+    core-pool-size: ${API_FLOW_EXECUTOR_CORE:0}      # 0 = auto (cores * 4, min 8)
+    max-pool-size: ${API_FLOW_EXECUTOR_MAX:0}        # 0 = auto (core * 2)
+    queue-capacity: ${API_FLOW_EXECUTOR_QUEUE:100}   # bounded — see ExecutorService for why
+  # UI flows: heavy. Each one launches a real Chromium process — memory and CPU heavy, not
+  # IO-bound. Keep this small and separate from the API pool so a handful of stuck/slow
+  # browser sessions can never starve lightweight API flows of a thread (bulkhead pattern).
+  ui:
+    core-pool-size: ${UI_FLOW_EXECUTOR_CORE:2}
+    max-pool-size: ${UI_FLOW_EXECUTOR_MAX:4}
+    queue-capacity: ${UI_FLOW_EXECUTOR_QUEUE:20}
+
 # LLM — Groq is the default for both local and deployed.
 # Get a free key at https://console.groq.com and set GROQ_API_KEY env var.
 llm:

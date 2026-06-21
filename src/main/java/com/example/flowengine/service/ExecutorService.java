@@ -23,8 +23,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -49,24 +47,132 @@ public class ExecutorService {
     private final MethodExecutorService methodExecutorService;
     private final PlaywrightExecutorService playwrightExecutorService;
 
-    private java.util.concurrent.ExecutorService asyncFlowExecutor;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.api.core-pool-size:0}")
+    private int apiCorePoolSizeConfig;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.api.max-pool-size:0}")
+    private int apiMaxPoolSizeConfig;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.api.queue-capacity:100}")
+    private int apiQueueCapacity;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.ui.core-pool-size:2}")
+    private int uiCorePoolSize;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.ui.max-pool-size:4}")
+    private int uiMaxPoolSize;
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.ui.queue-capacity:20}")
+    private int uiQueueCapacity;
+
+    // Two separately-sized, BOUNDED pools instead of one shared Executors.newFixedThreadPool(5):
+    //  - apiFlowExecutor: lightweight IO-bound HTTP flows, sized off available CPU cores
+    //  - uiFlowExecutor: heavy Playwright/browser flows, kept small and isolated so a few stuck
+    //    browser sessions can never starve API flows of a thread (bulkhead pattern)
+    private java.util.concurrent.ThreadPoolExecutor apiFlowExecutor;
+    private java.util.concurrent.ThreadPoolExecutor uiFlowExecutor;
 
     @PostConstruct
     public void init() {
-        asyncFlowExecutor = Executors.newFixedThreadPool(5);
+        int cores = Runtime.getRuntime().availableProcessors();
+
+        // IO-bound formula: most threads are blocked waiting on HTTP responses, not competing
+        // for CPU, so we can run well beyond `cores` threads without contention. cores*4 is a
+        // conservative starting multiplier — actual web servers/IO-bound services commonly run
+        // much higher; this is meant to be tuned from real metrics, not treated as final.
+        int apiCore = apiCorePoolSizeConfig > 0 ? apiCorePoolSizeConfig : Math.max(8, cores * 4);
+        int apiMax = apiMaxPoolSizeConfig > 0 ? apiMaxPoolSizeConfig : apiCore * 2;
+
+        apiFlowExecutor = buildBoundedPool("api-flow", apiCore, apiMax, apiQueueCapacity);
+        uiFlowExecutor = buildBoundedPool("ui-flow", uiCorePoolSize, uiMaxPoolSize, uiQueueCapacity);
+
+        log.info("[ExecutorService] apiFlowExecutor: core={} max={} queueCapacity={} (cores detected={})",
+                apiCore, apiMax, apiQueueCapacity, cores);
+        log.info("[ExecutorService] uiFlowExecutor: core={} max={} queueCapacity={}",
+                uiCorePoolSize, uiMaxPoolSize, uiQueueCapacity);
+    }
+
+    /**
+     * Builds a ThreadPoolExecutor with a BOUNDED queue (unlike Executors.newFixedThreadPool,
+     * which silently uses an unbounded LinkedBlockingQueue — meaning "pool size" only caps
+     * concurrency, not total accepted work; under sustained overload, queued tasks grow without
+     * limit until the JVM runs out of memory, with no feedback to callers that the system is
+     * overloaded). Once the queue is also full, new submissions are rejected immediately via
+     * AbortPolicy — translated by submitOrReject() into a clean, caller-visible 503 instead of
+     * an unbounded silent backlog.
+     */
+    private java.util.concurrent.ThreadPoolExecutor buildBoundedPool(String name, int core, int max, int queueCapacity) {
+        java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
+                core, max,
+                60L, TimeUnit.SECONDS, // idle threads above core size are reclaimed after 60s
+                new java.util.concurrent.ArrayBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread t = new Thread(runnable, name + "-" + System.nanoTime());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+        );
+        pool.allowCoreThreadTimeOut(true);
+        return pool;
+    }
+
+    /**
+     * Submits to the given pool, converting a full-pool-and-full-queue rejection into a clean
+     * IllegalStateException (mapped to HTTP 409 by GlobalExceptionHandler) instead of letting
+     * RejectedExecutionException surface as a raw 500. This is the caller-visible half of the
+     * backpressure story: when the system is genuinely at capacity, callers get a clear
+     * "try again" signal instead of either a confusing stack trace or — with the old unbounded
+     * queue — silent acceptance into an ever-growing backlog.
+     */
+    private void submitOrReject(java.util.concurrent.ThreadPoolExecutor pool, String workloadName, Runnable task) {
+        try {
+            pool.execute(task);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            log.warn("[ExecutorService] {} pool at capacity (active={}, queued={}, max={}) — rejecting new work",
+                    workloadName, pool.getActiveCount(), pool.getQueue().size(), pool.getMaximumPoolSize());
+            throw new IllegalStateException(
+                    workloadName + " execution capacity is full right now — please try again shortly.");
+        }
     }
 
     @PreDestroy
     public void shutdown() {
-        asyncFlowExecutor.shutdown();
+        shutdownPool(apiFlowExecutor, "apiFlowExecutor");
+        shutdownPool(uiFlowExecutor, "uiFlowExecutor");
+    }
+
+    private void shutdownPool(java.util.concurrent.ExecutorService pool, String name) {
+        if (pool == null) return;
+        pool.shutdown();
         try {
-            if (!asyncFlowExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
-                asyncFlowExecutor.shutdownNow();
+            if (!pool.awaitTermination(30, TimeUnit.SECONDS)) {
+                pool.shutdownNow();
             }
         } catch (InterruptedException e) {
-            asyncFlowExecutor.shutdownNow();
+            pool.shutdownNow();
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Pool stats for observability. Capacity numbers (cores*4, etc.) are starting points, not
+     * final answers — this is what you'd actually watch in production to decide whether to
+     * tune them: consistently near-zero queue size means you're over-provisioned, consistently
+     * full queue + rejections means under-provisioned.
+     */
+    public Map<String, Object> getExecutorStats() {
+        return Map.of(
+                "apiFlowPool", poolStats(apiFlowExecutor),
+                "uiFlowPool", poolStats(uiFlowExecutor)
+        );
+    }
+
+    private Map<String, Object> poolStats(java.util.concurrent.ThreadPoolExecutor pool) {
+        return Map.of(
+                "activeThreads", pool.getActiveCount(),
+                "poolSize", pool.getPoolSize(),
+                "corePoolSize", pool.getCorePoolSize(),
+                "maxPoolSize", pool.getMaximumPoolSize(),
+                "queuedTasks", pool.getQueue().size(),
+                "queueCapacityRemaining", pool.getQueue().remainingCapacity(),
+                "completedTaskCount", pool.getCompletedTaskCount()
+        );
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -124,14 +230,14 @@ public class ExecutorService {
         if (isUIFlow) {
             log.info("[ExecutorService] Async UI flow '{}' — routing to Playwright", flow.getName());
             FlowExecution flowExecution = createFlowExecution(flow, null, steps);
-            CompletableFuture.runAsync(() -> {
+            submitOrReject(uiFlowExecutor, "UI flow", () -> {
                 try {
                     playwrightExecutorService.executeUIFlow(flow, steps, flowExecution.getId());
                 } catch (Exception e) {
                     log.error("Playwright flow {} failed: {}", flowExecution.getId(), e.getMessage(), e);
                     markFlowFailed(flowExecution.getId(), e.getMessage());
                 }
-            }, asyncFlowExecutor);
+            });
             FlowExecutionStartResponse response = new FlowExecutionStartResponse();
             response.setFlowExecutionId(flowExecution.getId());
             response.setFlowId(flow.getId());
@@ -142,14 +248,14 @@ public class ExecutorService {
 
         FlowExecution flowExecution = createFlowExecution(flow, null, steps);
 
-        CompletableFuture.runAsync(() -> {
+        submitOrReject(apiFlowExecutor, "API flow", () -> {
             try {
                 executeExistingFlow(flow.getId(), flowExecution.getId(), environmentIdOverride);
             } catch (Exception e) {
                 log.error("Async flow execution {} failed: {}", flowExecution.getId(), e.getMessage(), e);
                 markFlowFailed(flowExecution.getId(), e.getMessage());
             }
-        }, asyncFlowExecutor);
+        });
 
         FlowExecutionStartResponse response = new FlowExecutionStartResponse();
         response.setFlowExecutionId(flowExecution.getId());
