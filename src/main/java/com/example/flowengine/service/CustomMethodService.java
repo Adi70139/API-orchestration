@@ -138,6 +138,22 @@ public class CustomMethodService {
             method.setGroovyScript(newScript);
             method.setLlmPromptDescription(request.getDescription());
             log.info("Method '{}' script regenerated from updated description", method.getName());
+        } else if (request.getParameters() != null) {
+            // Parameters changed (e.g. a new param added) but the existing script was NOT
+            // touched and there's no new description to regenerate from. Without this check,
+            // the script silently keeps running with no awareness of the new/changed params —
+            // exactly what happened when "protocol" was added but the script never read it.
+            // We don't auto-regenerate here (that would discard a manually-tuned script the
+            // user is relying on) — instead, run it against the new parameter set and fail
+            // loudly if it errors, so the gap surfaces immediately instead of on the next test.
+            String runtimeError = runtimeCheck(method.getGroovyScript(), buildSampleParams(request.getParameters()));
+            if (runtimeError != null) {
+                throw new IllegalArgumentException(
+                        "Parameters were updated, but the existing script fails against the new parameter set: " +
+                                runtimeError + ". Update the script to match (e.g. add params.get(\"" +
+                                "<newParamName>\")), or change the description and omit groovyScript to regenerate it.");
+            }
+            log.info("Method '{}' parameters updated — re-verified against existing script, OK", method.getName());
         }
 
         return toDTO(customMethodRepository.save(method));
@@ -356,10 +372,12 @@ public class CustomMethodService {
         if (parameters == null) return sample;
         for (var p : parameters) {
             String val = switch (p.getType() != null ? p.getType().toLowerCase() : "string") {
-                case "number", "integer", "int" -> "5";
-                case "boolean"                  -> "true";
-                case "list"                     -> "a,b,c";
-                default                         -> "test_" + p.getName(); // string
+                case "number", "integer", "int", "long"   -> "5";
+                case "double", "float"                    -> "5.5";
+                case "boolean"                             -> "true";
+                case "list", "list_string", "list of strings" -> "a,b,c";
+                case "list_number", "list of numbers"      -> "1,2,3";
+                default                                    -> "test_" + p.getName(); // string
             };
             sample.put(p.getName(), val);
         }

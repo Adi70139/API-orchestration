@@ -267,8 +267,7 @@ public class MethodExecutorService {
 
         try {
             groovy.lang.Binding binding = new groovy.lang.Binding();
-            // Pass params as a plain LinkedHashMap — guaranteed clean key access in Groovy
-            binding.setVariable("params", new java.util.LinkedHashMap<>(params));
+            binding.setVariable("params", buildGroovyParamMap(params));
 
             groovy.lang.GroovyShell shell = new groovy.lang.GroovyShell(binding);
             Object scriptResult = shell.evaluate(script);
@@ -289,6 +288,47 @@ public class MethodExecutorService {
 
         } catch (Exception e) {
             throw new RuntimeException("Groovy execution error: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Builds the Map passed into the Groovy binding as `params`.
+     * Two things fixed here:
+     *  1. Case-insensitive keys — params.get("Headers") and params.get("headers") must both work,
+     *     since a script author shouldn't have to match the exact casing declared in the UI's
+     *     parameter list, and historically a single casing typo silently returned null with no error.
+     *  2. Value normalization — the UI's test form sends every scalar value as JSON-encoded text,
+     *     so a String-type param like "url" arrives as the literal 8 characters ["\"https:...\""]
+     *     INCLUDING the quote characters, not just the URL. Passed straight to `new URL(...)`,
+     *     that throws MalformedURLException: no protocol, because the string literally starts
+     *     with a `"` character. Here we JSON-sniff each value: if it parses as a JSON scalar
+     *     (string/number/boolean), we unwrap it to the plain value. If it's an object/array
+     *     (e.g. a JSON request body) or isn't valid JSON at all (e.g. the Headers field's
+     *     "k","v" shorthand), we leave it untouched — scripts that expect raw JSON text or a
+     *     custom format keep working exactly as before.
+     */
+    private Map<String, String> buildGroovyParamMap(Map<String, String> params) {
+        Map<String, String> normalized = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (params == null) return normalized;
+        params.forEach((k, v) -> normalized.put(k, normalizeParamValue(v)));
+        return normalized;
+    }
+
+    private String normalizeParamValue(String raw) {
+        if (raw == null || raw.isBlank()) return raw;
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(raw);
+            if (node.isValueNode()) {
+                // Scalar (string/number/boolean/null) — unwrap to its plain text form.
+                return node.isNull() ? "" : node.asText();
+            }
+            // Object or array (e.g. a JSON request body) — keep the original raw text as-is,
+            // scripts handle JSON bodies as text (e.g. JsonSlurper or pass-through).
+            return raw;
+        } catch (Exception e) {
+            // Not valid JSON at all — e.g. a bare URL with no quotes, or the Headers field's
+            // "k","v" shorthand. Leave it exactly as received.
+            return raw;
         }
     }
 

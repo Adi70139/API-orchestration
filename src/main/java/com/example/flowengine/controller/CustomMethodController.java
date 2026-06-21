@@ -23,6 +23,21 @@ public class CustomMethodController {
 
     // ─── Method library ───────────────────────────────────────────────────────
 
+    @GetMapping("/methods/parameter-types")
+    @Operation(
+            summary = "List supported parameter types",
+            description = "Returns the parameter types the method-builder UI can offer when defining a " +
+                    "custom method's parameters (for the 'type' dropdown). Descriptive only — not enforced " +
+                    "at execution time, since Groovy params are dynamically typed.")
+    public List<Map<String, String>> listParameterTypes() {
+        return java.util.Arrays.stream(com.example.flowengine.constants.ParameterType.values())
+                .map(t -> Map.of(
+                        "value", t.name(),
+                        "label", t.getLabel(),
+                        "description", t.getDescription()))
+                .toList();
+    }
+
     @GetMapping("/methods")
     @Operation(
             summary = "List saved (global) methods",
