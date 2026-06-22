@@ -187,7 +187,6 @@ public class ExecutorService {
         );
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride) {
         return runModule(moduleId, environmentIdOverride, false);
     }
@@ -563,9 +562,10 @@ public class ExecutorService {
             }
         }
 
-        flowExecution.setFinishedAt(LocalDateTime.now());
-        flowExecution.setStatus(allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
-        flowExecutionRepository.save(flowExecution);
+        flowExecutionRepository.updateExecutionStatus(
+                flowExecution.getId(),
+                allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL,
+                LocalDateTime.now());
 
         FlowExecutionResult result = new FlowExecutionResult();
         result.setFlowExecutionId(flowExecution.getId());
@@ -625,11 +625,8 @@ public class ExecutorService {
     }
 
     private void markFlowFailed(Long flowExecutionId, String message) {
-        flowExecutionRepository.findById(flowExecutionId).ifPresent(flowExecution -> {
-            flowExecution.setStatus(ExecutionStatus.FAIL);
-            flowExecution.setFinishedAt(LocalDateTime.now());
-            flowExecutionRepository.save(flowExecution);
-        });
+        flowExecutionRepository.updateExecutionStatus(
+                flowExecutionId, ExecutionStatus.FAIL, LocalDateTime.now());
 
         stepExecutionRepository.findByFlowExecutionIdOrderByStepOrderAsc(flowExecutionId).stream()
                 .filter(stepExecution -> stepExecution.getStatus() == ExecutionStatus.IN_PROGRESS)

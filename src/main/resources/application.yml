@@ -89,7 +89,7 @@ flow-executor:
   # of the "2 of 3 simultaneous logins return 401" bug (backend enforces single-session-per-
   # account and rejects concurrent logins). 300ms is enough for the first flow to complete
   # its login before the next one starts. Set to 0 to disable if your flows use separate accounts.
-  parallel-stagger-ms: ${PARALLEL_STAGGER_MS:300}
+  parallel-stagger-ms: ${PARALLEL_STAGGER_MS:400}
 
 # LLM — Groq is the default for both local and deployed.
 # Get a free key at https://console.groq.com and set GROQ_API_KEY env var.

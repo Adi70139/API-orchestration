@@ -359,12 +359,9 @@ public class PlaywrightExecutorService {
 
     private void updateFlowStatus(Long flowExecutionId, ExecutionStatus status, boolean finished) {
         if (flowExecutionId == null) return;
-        flowExecutionRepository.findById(flowExecutionId).ifPresent(fe -> {
-            fe.setStatus(status);
-            if (finished) fe.setFinishedAt(LocalDateTime.now());
-            flowExecutionRepository.save(fe);
-            log.info("[PlaywrightExecutor] FlowExecution[{}] → {}", flowExecutionId, status);
-        });
+        flowExecutionRepository.updateExecutionStatus(
+                flowExecutionId, status, finished ? LocalDateTime.now() : null);
+        log.info("[PlaywrightExecutor] FlowExecution[{}] → {}", flowExecutionId, status);
     }
 
     private void updateStepStatus(StepExecution se, ExecutionStatus status,

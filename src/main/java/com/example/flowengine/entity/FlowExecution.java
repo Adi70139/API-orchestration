@@ -4,6 +4,7 @@ import com.example.flowengine.constants.ExecutionStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Entity
@@ -32,7 +33,7 @@ public class FlowExecution {
     @Column(nullable = false)
     private ExecutionStatus status;
 
-    @OneToMany(mappedBy = "flowExecution", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "flowExecution", cascade = CascadeType.ALL)
     @OrderBy("stepOrder ASC")
-    private List<StepExecution> stepExecutions;
+    private List<StepExecution> stepExecutions = new ArrayList<>();
 }
