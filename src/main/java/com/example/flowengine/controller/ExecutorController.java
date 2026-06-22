@@ -34,7 +34,7 @@ public class ExecutorController {
     public ModuleExecutionResult runModule(
             @PathVariable Long moduleId,
             @RequestParam(required = false) Long envId,
-            @RequestParam(required = false, defaultValue = "true") boolean parallel) {
+            @RequestParam(required = false, defaultValue = "false") boolean parallel) {
         return executorService.runModule(moduleId, envId, parallel);
     }
 
