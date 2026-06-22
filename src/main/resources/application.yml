@@ -84,6 +84,12 @@ flow-executor:
     core-pool-size: ${UI_FLOW_EXECUTOR_CORE:2}
     max-pool-size: ${UI_FLOW_EXECUTOR_MAX:4}
     queue-capacity: ${UI_FLOW_EXECUTOR_QUEUE:20}
+  # Delay between dispatching each flow in a parallel module run. Prevents all flows from
+  # hitting the same auth/login endpoint at the exact same millisecond — confirmed root cause
+  # of the "2 of 3 simultaneous logins return 401" bug (backend enforces single-session-per-
+  # account and rejects concurrent logins). 300ms is enough for the first flow to complete
+  # its login before the next one starts. Set to 0 to disable if your flows use separate accounts.
+  parallel-stagger-ms: ${PARALLEL_STAGGER_MS:300}
 
 # LLM — Groq is the default for both local and deployed.
 # Get a free key at https://console.groq.com and set GROQ_API_KEY env var.
@@ -116,4 +122,7 @@ logging:
     org.springframework.cache: ${CACHE_LOG_LEVEL:INFO}
     com.example.flowengine.service.AppAssistantService: INFO
     com.example.flowengine.service.AssertionGeneratorService: DEBUG
+    # Temporary — wire-level logging for parallel flow auth failure root cause.
+    # Set to INFO once the bug is found and the [WIRE] log block is removed.
+    com.example.flowengine.service.ExecutorService: ${EXECUTOR_LOG_LEVEL:DEBUG}
     com.itextpdf.layout.renderer.TableWidths: ERROR

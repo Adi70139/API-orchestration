@@ -37,6 +37,9 @@ public class BulkExecutionService {
     @Value("${bulk.executor.thread-pool-size:10}")
     private int threadPoolSize;
 
+    @Value("${flow-executor.parallel-stagger-ms:300}")
+    private long parallelStaggerMs;
+
     // Dedicated pool — never shares with ForkJoinPool or scheduler threads
     private ThreadPoolExecutor bulkExecutor;
 
@@ -106,9 +109,8 @@ public class BulkExecutionService {
             items.add(bulkJobItemRepository.save(item));
         }
 
-        List<CompletableFuture<Void>> futures = items.stream()
-                .map(item -> CompletableFuture.runAsync(() -> runModuleItem(item), bulkExecutor))
-                .collect(Collectors.toList());
+        List<CompletableFuture<Void>> futures = staggeredDispatch(items, item ->
+                CompletableFuture.runAsync(() -> runModuleItem(item), bulkExecutor));
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                 .thenRunAsync(() -> finalizeBulkJob(job.getId()), bulkExecutor);
@@ -136,9 +138,8 @@ public class BulkExecutionService {
             items.add(bulkJobItemRepository.save(item));
         }
 
-        List<CompletableFuture<Void>> futures = items.stream()
-                .map(item -> CompletableFuture.runAsync(() -> runFlowItem(item), bulkExecutor))
-                .collect(Collectors.toList());
+        List<CompletableFuture<Void>> futures = staggeredDispatch(items, item ->
+                CompletableFuture.runAsync(() -> runFlowItem(item), bulkExecutor));
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                 .thenRunAsync(() -> finalizeBulkJob(job.getId()), bulkExecutor);
@@ -153,6 +154,31 @@ public class BulkExecutionService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Dispatches items one at a time with a configurable delay between each submission.
+     * Without this, all items are submitted simultaneously via stream().map(...) — meaning all
+     * flows hit the login endpoint at the exact same millisecond, and the backend rejects 2 of 3
+     * with a 401 because it enforces single-active-session-per-account. Confirmed in wire logs:
+     * all 3 [WIRE] lines had identical timestamps down to the millisecond. The stagger gives
+     * each flow enough time to complete its login before the next one starts.
+     */
+    private <T> List<CompletableFuture<Void>> staggeredDispatch(
+            List<T> items, java.util.function.Function<T, CompletableFuture<Void>> submitter) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0 && parallelStaggerMs > 0) {
+                try {
+                    Thread.sleep(parallelStaggerMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            futures.add(submitter.apply(items.get(i)));
+        }
+        return futures;
+    }
 
     private Long resolveEnvId(List<Long> envIds, int index) {
         if (envIds == null || envIds.isEmpty()) return null;

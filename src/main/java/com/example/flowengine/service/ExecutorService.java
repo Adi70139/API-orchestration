@@ -47,6 +47,15 @@ public class ExecutorService {
     private final MethodExecutorService methodExecutorService;
     private final PlaywrightExecutorService playwrightExecutorService;
 
+    // Self-injected proxy — required so the @Transactional boundaries on the helper methods
+    // below (startModuleExecution, createFlowExecutionShells, finishModuleExecution) actually
+    // apply. Calling `this.someTransactionalMethod()` from inside the same class bypasses
+    // Spring's AOP proxy entirely (the "self-invocation" gotcha) — going through `self` routes
+    // the call back through the proxy so a real, separate transaction is opened for each one.
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private ExecutorService self;
+
     @org.springframework.beans.factory.annotation.Value("${flow-executor.api.core-pool-size:0}")
     private int apiCorePoolSizeConfig;
     @org.springframework.beans.factory.annotation.Value("${flow-executor.api.max-pool-size:0}")
@@ -59,6 +68,9 @@ public class ExecutorService {
     private int uiMaxPoolSize;
     @org.springframework.beans.factory.annotation.Value("${flow-executor.ui.queue-capacity:20}")
     private int uiQueueCapacity;
+
+    @org.springframework.beans.factory.annotation.Value("${flow-executor.parallel-stagger-ms:300}")
+    private long parallelStaggerMs;
 
     // Two separately-sized, BOUNDED pools instead of one shared Executors.newFixedThreadPool(5):
     //  - apiFlowExecutor: lightweight IO-bound HTTP flows, sized off available CPU cores
@@ -177,39 +189,168 @@ public class ExecutorService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride) {
+        return runModule(moduleId, environmentIdOverride, false);
+    }
+
+    /**
+     * @param parallel If true, flows run concurrently instead of one-by-one. NOT the default —
+     *                  flows in the same module commonly share state (same login session, same
+     *                  test data/record IDs, same rate-limited environment), so concurrent runs
+     *                  can turn deterministic failures into flaky, hard-to-reproduce ones. Only
+     *                  opt into this for modules you've verified are made of independent flows.
+     *
+     *                  Implementation note on why this isn't just "submit each flow to a pool":
+     *                  the original synchronous version ran the whole module — every flow,
+     *                  every HTTP call — inside one long-lived transaction on one connection.
+     *                  That's safe single-threaded, but worker threads get their OWN transaction/
+     *                  connection (Spring's transaction binding is thread-local), and under
+     *                  READ COMMITTED isolation a worker thread can't see rows the original
+     *                  thread's transaction hasn't committed yet — so a naive parallel dispatch
+     *                  would throw foreign-key violations the moment a worker thread tries to
+     *                  insert a FlowExecution row against a ModuleExecution that isn't committed.
+     *                  Fix: commit the ModuleExecution row and all FlowExecution/StepExecution
+     *                  shell rows FIRST (sequentially — fast, no HTTP calls involved), THEN
+     *                  dispatch only the actual execution work (the slow, IO-bound part) to the
+     *                  pools, each against its own already-committed, already-visible rows.
+     */
+    public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride, boolean parallel) {
         ModuleEntity module = moduleRepository.findById(moduleId)
                 .orElseThrow(() -> new IllegalArgumentException("Module not found: " + moduleId));
-
         List<FlowDefinition> flows = flowRepository.findByModuleId(moduleId);
 
-        ModuleExecution moduleExecution = new ModuleExecution();
-        moduleExecution.setModule(module);
-        moduleExecution.setStartedAt(LocalDateTime.now());
-        moduleExecution.setStatus(ExecutionStatus.IN_PROGRESS);
-        moduleExecution = moduleExecutionRepository.save(moduleExecution);
-
-        List<FlowExecutionResult> flowResults = new ArrayList<>();
         long moduleStart = System.currentTimeMillis();
-        boolean allPassed = true;
+        Long moduleExecutionId = self.startModuleExecution(moduleId);
 
+        // Pre-create FlowExecution + StepExecution rows for every flow, sequentially, and commit
+        // each in its own short transaction — these must be durable and visible to worker
+        // threads BEFORE any parallel dispatch happens.
+        List<Long[]> flowExecutionIds = new ArrayList<>(); // [0]=flowId, [1]=flowExecutionId
         for (FlowDefinition flow : flows) {
-            FlowExecutionResult flowResult = executeFlow(flow, moduleExecution, environmentIdOverride);
-            flowResults.add(flowResult);
-            if (!flowResult.isAllStepsPassed()) allPassed = false;
+            Long flowExecutionId = self.createFlowExecutionShell(flow.getId(), moduleExecutionId);
+            flowExecutionIds.add(new Long[]{flow.getId(), flowExecutionId});
         }
 
-        moduleExecution.setFinishedAt(LocalDateTime.now());
-        moduleExecution.setStatus(allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
-        moduleExecutionRepository.save(moduleExecution);
+        List<FlowExecutionResult> flowResults;
+        if (parallel) {
+            log.info("[ExecutorService] Module '{}' — running {} flows in PARALLEL (staggerMs={})",
+                    module.getName(), flows.size(), parallelStaggerMs);
+            List<java.util.concurrent.CompletableFuture<FlowExecutionResult>> futures = new ArrayList<>();
+            for (int i = 0; i < flowExecutionIds.size(); i++) {
+                Long[] pair = flowExecutionIds.get(i);
+                Long flowId = pair[0];
+                Long flowExecutionId = pair[1];
+                FlowDefinition flow = flows.stream().filter(f -> f.getId().equals(flowId)).findFirst().orElseThrow();
+                List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
+                boolean isUI = isUIFlow(steps);
+                java.util.concurrent.ThreadPoolExecutor pool = isUI ? uiFlowExecutor : apiFlowExecutor;
+
+                // Stagger dispatch to avoid all flows hammering the same login/auth endpoint
+                // at the exact same millisecond. Even 200ms is enough: the backend enforces
+                // single-session-per-account and rejects 2 of 3 simultaneous logins from
+                // identical credentials — confirmed in wire logs (all 3 at 09:14:59.309,
+                // 2 came back 401). curl tests didn't reproduce this because shell backgrounding
+                // still has a few ms of natural spread; Java threads dispatched by the same
+                // pool have none. Configure via flow-executor.parallel-stagger-ms in application.yml.
+                if (i > 0 && parallelStaggerMs > 0) {
+                    try { Thread.sleep(parallelStaggerMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                }
+
+                java.util.concurrent.CompletableFuture<FlowExecutionResult> future = new java.util.concurrent.CompletableFuture<>();
+                futures.add(future);
+                try {
+                    pool.execute(() -> {
+                        try {
+                            future.complete(isUI
+                                    ? playwrightExecutorService.executeUIFlow(flow, steps, flowExecutionId)
+                                    : executeExistingFlow(flowId, flowExecutionId, environmentIdOverride));
+                        } catch (Exception e) {
+                            log.error("Parallel flow execution {} failed: {}", flowExecutionId, e.getMessage(), e);
+                            markFlowFailed(flowExecutionId, e.getMessage());
+                            future.completeExceptionally(e);
+                        }
+                    });
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    markFlowFailed(flowExecutionId, "Execution capacity full — flow was never started");
+                    future.completeExceptionally(e);
+                }
+            }
+            flowResults = futures.stream()
+                    .map(f -> {
+                        try {
+                            return f.join();
+                        } catch (Exception e) {
+                            // Already logged + marked FAIL above — build a minimal failed result so
+                            // the module result list stays complete instead of throwing and losing
+                            // every other flow's result.
+                            FlowExecutionResult failed = new FlowExecutionResult();
+                            failed.setAllStepsPassed(false);
+                            return failed;
+                        }
+                    })
+                    .toList();
+        } else {
+            flowResults = new ArrayList<>();
+            for (Long[] pair : flowExecutionIds) {
+                Long flowId = pair[0];
+                Long flowExecutionId = pair[1];
+                FlowDefinition flow = flows.stream().filter(f -> f.getId().equals(flowId)).findFirst().orElseThrow();
+                List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
+                boolean isUI = isUIFlow(steps);
+                FlowExecutionResult result = isUI
+                        ? playwrightExecutorService.executeUIFlow(flow, steps, flowExecutionId)
+                        : executeExistingFlow(flowId, flowExecutionId, environmentIdOverride);
+                flowResults.add(result);
+            }
+        }
+
+        boolean allPassed = flowResults.stream().allMatch(FlowExecutionResult::isAllStepsPassed);
+        self.finishModuleExecution(moduleExecutionId, allPassed);
 
         ModuleExecutionResult result = new ModuleExecutionResult();
-        result.setModuleExecutionId(moduleExecution.getId());
+        result.setModuleExecutionId(moduleExecutionId);
         result.setModuleId(moduleId);
         result.setModuleName(module.getName());
         result.setAllFlowsPassed(allPassed);
         result.setFlowResults(flowResults);
         result.setTotalDurationMs(System.currentTimeMillis() - moduleStart);
         return result;
+    }
+
+    private boolean isUIFlow(List<FlowStep> steps) {
+        return !steps.isEmpty() && steps.stream().allMatch(s -> "UI".equalsIgnoreCase(s.getMethod()));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistLastResponseBody(Long stepId, String responseBody) {
+        flowStepRepository.updateLastResponseBody(stepId, responseBody);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Long startModuleExecution(Long moduleId) {
+        ModuleEntity module = moduleRepository.getReferenceById(moduleId);
+        ModuleExecution moduleExecution = new ModuleExecution();
+        moduleExecution.setModule(module);
+        moduleExecution.setStartedAt(LocalDateTime.now());
+        moduleExecution.setStatus(ExecutionStatus.IN_PROGRESS);
+        return moduleExecutionRepository.save(moduleExecution).getId();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Long createFlowExecutionShell(Long flowId, Long moduleExecutionId) {
+        FlowDefinition flow = flowRepository.findById(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found: " + flowId));
+        ModuleExecution moduleExecution = moduleExecutionRepository.getReferenceById(moduleExecutionId);
+        List<FlowStep> steps = flowStepRepository.findByFlowIdOrderByStepOrder(flowId);
+        return createFlowExecution(flow, moduleExecution, steps).getId();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void finishModuleExecution(Long moduleExecutionId, boolean allPassed) {
+        ModuleExecution moduleExecution = moduleExecutionRepository.findById(moduleExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("ModuleExecution not found: " + moduleExecutionId));
+        moduleExecution.setFinishedAt(LocalDateTime.now());
+        moduleExecution.setStatus(allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
+        moduleExecutionRepository.save(moduleExecution);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -401,9 +542,20 @@ public class ExecutorService {
             if (stepResult.isSuccess()) {
                 previousResponses.add(stepResult.getResponseBody());
                 responsesByStepId.put(step.getId(), stepResult.getResponseBody());
-                // Persist latest response body on the step entity for LLM generators
-                step.setLastResponseBody(stepResult.getResponseBody());
-                flowStepRepository.save(step);
+                // Update lastResponseBody for LLM generators via a targeted UPDATE, not a full
+                // entity save. The original code did flowStepRepository.save(step) here — that
+                // rewrites the entire row from the in-memory entity state, which is a
+                // concurrent write bug: all parallel flow executions share the same FlowStep
+                // rows (same step IDs), so three simultaneous save() calls on the same entity
+                // race each other, and the last writer wins regardless of which flow's
+                // response body is actually correct for that step.
+                // A targeted single-column UPDATE is atomic per row and doesn't risk
+                // overwriting unrelated fields from a stale in-memory entity snapshot.
+                try {
+                    self.persistLastResponseBody(step.getId(), stepResult.getResponseBody());
+                } catch (Exception e) {
+                    log.warn("Could not persist lastResponseBody for step '{}': {}", step.getName(), e.getMessage());
+                }
             } else {
                 allPassed = false;
                 log.warn("Step '{}' failed in flow '{}': {}", step.getName(), flow.getName(), stepResult.getErrorMessage());
@@ -739,7 +891,25 @@ public class ExecutorService {
             }
             requestBuilder.method(method, body);
 
-            try (Response response = okHttpClient.newCall(requestBuilder.build()).execute()) {
+            Request request = requestBuilder.build();
+
+            // Wire-level log — logs exact bytes going out so we can diff concurrent requests.
+            // Remove once the parallel-flow auth failure is root-caused.
+            if (log.isDebugEnabled()) {
+                String bodyPreview = "(no body)";
+                if (request.body() != null) {
+                    try {
+                        okio.Buffer buf = new okio.Buffer();
+                        request.body().writeTo(buf);
+                        bodyPreview = buf.readUtf8();
+                    } catch (Exception ignored) {}
+                }
+                log.debug("[WIRE] thread={} step='{}' {} {} body={}",
+                        Thread.currentThread().getName(), step.getName(),
+                        request.method(), request.url(), bodyPreview);
+            }
+
+            try (Response response = okHttpClient.newCall(request).execute()) {
                 long duration = System.currentTimeMillis() - start;
                 String responseBody = response.body() != null ? response.body().string() : "";
                 boolean success = response.isSuccessful();

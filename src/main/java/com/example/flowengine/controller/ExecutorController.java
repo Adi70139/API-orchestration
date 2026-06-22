@@ -21,14 +21,21 @@ public class ExecutorController {
 
     /**
      * Run all flows in a module.
-     * POST /execute/modules/{moduleId}?envId={envId}
+     * POST /execute/modules/{moduleId}?envId={envId}&parallel=true
+     *
+     * parallel defaults to false — flows in a module often share state (login session, test
+     * data, rate-limited environment), so running them concurrently can turn deterministic
+     * failures into flaky ones. Only pass parallel=true for modules you've verified are made of
+     * independent flows.
      */
     @PostMapping("/modules/{moduleId}")
-    @Operation(summary = "Run Module", description = "Execute a module.")
+    @Operation(summary = "Run Module", description = "Execute a module. Set parallel=true to run its " +
+            "flows concurrently instead of sequentially — only safe for modules with independent flows.")
     public ModuleExecutionResult runModule(
             @PathVariable Long moduleId,
-            @RequestParam(required = false) Long envId) {
-        return executorService.runModule(moduleId, envId);
+            @RequestParam(required = false) Long envId,
+            @RequestParam(required = false, defaultValue = "true") boolean parallel) {
+        return executorService.runModule(moduleId, envId, parallel);
     }
 
     /**
