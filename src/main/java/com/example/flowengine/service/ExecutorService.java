@@ -533,6 +533,8 @@ public class ExecutorService {
                 log.warn("Could not run pre-step methods for step '{}': {}", step.getName(), e.getMessage());
             }
 
+            log.info("Context for the step {}, {}",step.getName(), previousResponsesWithMethods);
+
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
                     ? executeStepWithPolling(step, previousResponsesWithMethods, responsesByStepId, stepExecution)
                     : executeStepWithRetry(step, previousResponsesWithMethods, responsesByStepId, stepExecution);

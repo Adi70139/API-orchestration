@@ -43,9 +43,9 @@ server:
 
 app:
   encryption:
-    secret: ${ENCRYPTION_SECRET:12345678901234567890123456789012}
+    secret: ${ENCRYPTION_SECRET:}
   jwt:
-    secret: ${JWT_SECRET:flowengine-jwt-secret-key-change-in-production-min-32-chars}
+    secret: ${JWT_SECRET:}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}  # 24 hours
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
 
