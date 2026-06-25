@@ -187,6 +187,7 @@ public class ExecutorService {
         );
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ModuleExecutionResult runModule(Long moduleId, Long environmentIdOverride) {
         return runModule(moduleId, environmentIdOverride, false);
     }
@@ -562,10 +563,9 @@ public class ExecutorService {
             }
         }
 
-        flowExecutionRepository.updateExecutionStatus(
-                flowExecution.getId(),
-                allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL,
-                LocalDateTime.now());
+        flowExecution.setFinishedAt(LocalDateTime.now());
+        flowExecution.setStatus(allPassed ? ExecutionStatus.PASS : ExecutionStatus.FAIL);
+        flowExecutionRepository.save(flowExecution);
 
         FlowExecutionResult result = new FlowExecutionResult();
         result.setFlowExecutionId(flowExecution.getId());
@@ -625,8 +625,11 @@ public class ExecutorService {
     }
 
     private void markFlowFailed(Long flowExecutionId, String message) {
-        flowExecutionRepository.updateExecutionStatus(
-                flowExecutionId, ExecutionStatus.FAIL, LocalDateTime.now());
+        flowExecutionRepository.findById(flowExecutionId).ifPresent(flowExecution -> {
+            flowExecution.setStatus(ExecutionStatus.FAIL);
+            flowExecution.setFinishedAt(LocalDateTime.now());
+            flowExecutionRepository.save(flowExecution);
+        });
 
         stepExecutionRepository.findByFlowExecutionIdOrderByStepOrderAsc(flowExecutionId).stream()
                 .filter(stepExecution -> stepExecution.getStatus() == ExecutionStatus.IN_PROGRESS)
@@ -773,6 +776,20 @@ public class ExecutorService {
         int expectedStatus = step.getPollExpectedStatus() != null ? step.getPollExpectedStatus() : 200;
         int initialDelayMs = step.getInitialDelayMs() != null ? step.getInitialDelayMs() : 0;
 
+        // Parse poll body condition if provided
+        com.example.flowengine.DTO.FlowStepRequest.SkipConditionRequest pollCondition = null;
+        if (step.getPollConditionJson() != null && !step.getPollConditionJson().isBlank()) {
+            try {
+                pollCondition = objectMapper.readValue(step.getPollConditionJson(),
+                        com.example.flowengine.DTO.FlowStepRequest.SkipConditionRequest.class);
+                log.info("[Polling] Step '{}' has body condition: {}", step.getName(), step.getPollConditionJson());
+            } catch (Exception e) {
+                log.warn("[Polling] Step '{}' has invalid pollConditionJson — ignoring body condition: {}",
+                        step.getName(), e.getMessage());
+            }
+        }
+        final com.example.flowengine.DTO.FlowStepRequest.SkipConditionRequest finalPollCondition = pollCondition;
+
         List<PollAttemptResult> attempts = new ArrayList<>();
         StepExecutionResult lastResult = null;
 
@@ -795,9 +812,19 @@ public class ExecutorService {
             pollAttempt.setResponseBody(lastResult.getResponseBody());
             pollAttempt.setDurationMs(lastResult.getDurationMs());
 
-            // Polling success: status matches expected
-            boolean conditionMet = lastResult.getStatusCode() != null
-                    && lastResult.getStatusCode() == expectedStatus;
+            // Poll condition: status code must match (use 0 to skip status check)
+            // AND body condition must be satisfied (if configured)
+            boolean statusOk = expectedStatus == 0
+                    || (lastResult.getStatusCode() != null && lastResult.getStatusCode() == expectedStatus);
+
+            boolean bodyConditionOk = true;
+            String bodyConditionDetail = "";
+            if (finalPollCondition != null) {
+                bodyConditionOk = skipConditionEvaluator.isSatisfied(finalPollCondition, lastResult.getResponseBody());
+                bodyConditionDetail = bodyConditionOk ? " body condition ✓" : " body condition pending";
+            }
+
+            boolean conditionMet = statusOk && bodyConditionOk;
             pollAttempt.setSuccess(conditionMet);
             attempts.add(pollAttempt);
 
@@ -812,16 +839,20 @@ public class ExecutorService {
                 break;
             }
 
-            log.info("Polling step '{}' attempt {}/{} — got {} (expecting {})",
+            log.info("[Polling] Step '{}' attempt {}/{} — status={} (expecting {}){}",
                     step.getName(), attempt, maxAttempts,
-                    lastResult.getStatusCode(), expectedStatus);
+                    lastResult.getStatusCode(), expectedStatus == 0 ? "any" : expectedStatus,
+                    bodyConditionDetail);
         }
 
         // If we exhausted all attempts without meeting condition
         if (!attempts.isEmpty() && !attempts.get(attempts.size() - 1).isSuccess()) {
-            String msg = "Polling timed out after " + attempts.size() + " attempts — "
-                    + "last status: " + (lastResult.getStatusCode() != null ? lastResult.getStatusCode() : "no response")
-                    + " (expected " + expectedStatus + ")";
+            String conditionDesc = expectedStatus == 0
+                    ? "body condition not met"
+                    : "last status: " + (lastResult.getStatusCode() != null ? lastResult.getStatusCode() : "no response")
+                      + " (expected " + expectedStatus + ")"
+                      + (finalPollCondition != null ? " + body condition not met" : "");
+            String msg = "Polling timed out after " + attempts.size() + " attempts — " + conditionDesc;
             log.error("Step '{}': {}", step.getName(), msg);
             lastResult.setSuccess(false);
             lastResult.setErrorMessage(msg);

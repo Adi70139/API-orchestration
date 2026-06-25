@@ -106,6 +106,21 @@ public class FlowStep {
     @Column(columnDefinition = "INTEGER DEFAULT 200")
     private Integer pollExpectedStatus = 200;   // HTTP status that means "done"
 
+    // Optional — poll until a field in the response body matches a condition.
+    // Evaluated IN ADDITION to pollExpectedStatus (both must be satisfied unless
+    // pollExpectedStatus is set to 0, which means "any status code is OK").
+    //
+    // JSON: { "path": "data.status", "operator": "equals", "value": "COMPLETED" }
+    // or with multiple: { "logic": "OR", "conditions": [
+    //   { "path": "data.status", "operator": "equals", "value": "COMPLETED" },
+    //   { "path": "data.status", "operator": "equals", "value": "FAILED" }
+    // ]}
+    //
+    // Supported operators: equals, notEquals, contains, notContains, in, exists, greaterThan, lessThan
+    // path uses dot-notation: "data.status", "result[0].state", "status"
+    @Column(columnDefinition = "TEXT")
+    private String pollConditionJson;
+
     // Skip condition — evaluated against accumulated responses before this step runs.
     // JSON: { "logic": "AND"|"OR", "conditions": [ { "path": "status", "operator": "equals", "value": "inactive" } ] }
     @Column(columnDefinition = "TEXT")

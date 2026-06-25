@@ -344,6 +344,22 @@ public class FlowStepService {
         step.setPollIntervalMs(Math.min(Math.max(pollIntervalMs, 500), MAX_POLL_INTERVAL_MS));
         step.setPollMaxAttempts(Math.min(Math.max(pollMaxAttempts, 1), MAX_POLL_ATTEMPTS));
         step.setPollExpectedStatus(pollExpectedStatus);
+
+        // Validate pollConditionJson structure if provided — catch malformed JSON early
+        if (request.getPollConditionJson() != null && !request.getPollConditionJson().isBlank()) {
+            try {
+                objectMapper.readValue(request.getPollConditionJson(),
+                        FlowStepRequest.SkipConditionRequest.class);
+                step.setPollConditionJson(request.getPollConditionJson());
+            } catch (Exception e) {
+                throw new IllegalArgumentException(
+                        "Invalid pollConditionJson — must follow the same structure as skipConditionJson. " +
+                                "Example: {\"path\":\"data.status\",\"operator\":\"equals\",\"value\":\"COMPLETED\"}. " +
+                                "Error: " + e.getMessage());
+            }
+        } else {
+            step.setPollConditionJson(null);
+        }
     }
 
     private void mapAssertions(FlowStep step, FlowStepRequest request) {

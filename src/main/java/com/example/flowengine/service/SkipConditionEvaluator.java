@@ -30,6 +30,51 @@ import java.util.Map;
 public class SkipConditionEvaluator {
 
     /**
+     * Evaluates a poll condition against the current response body only.
+     * Unlike shouldSkip() which looks at all accumulated previous responses,
+     * this only looks at the specific response body just received — what you want
+     * when polling: "did THIS response contain status=COMPLETED?"
+     *
+     * @return true if the condition is satisfied (poll can stop), false if still waiting
+     */
+    public boolean isSatisfied(SkipConditionRequest condition, String currentResponseBody) {
+        if (condition == null || condition.getConditions() == null || condition.getConditions().isEmpty()) {
+            return true; // no condition = always satisfied; fall back to status code check only
+        }
+
+        if (currentResponseBody == null || currentResponseBody.isBlank()) {
+            log.debug("[PollCondition] Empty response body — condition not satisfied");
+            return false;
+        }
+
+        // Build lookup map from just this one response body
+        Map<String, String> context = PlaceholderUtils.buildLookupMap(List.of(currentResponseBody));
+        String logic = condition.getLogic() != null ? condition.getLogic().toUpperCase() : "AND";
+        List<SkipConditionRule> rules = condition.getConditions();
+
+        if ("OR".equals(logic)) {
+            for (SkipConditionRule rule : rules) {
+                EvalResult result = evaluate(rule, context, List.of(currentResponseBody));
+                if (result.matched) {
+                    log.debug("[PollCondition] OR condition satisfied: {}", result.description);
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            // AND — all must match
+            for (SkipConditionRule rule : rules) {
+                EvalResult result = evaluate(rule, context, List.of(currentResponseBody));
+                if (!result.matched) {
+                    log.debug("[PollCondition] AND condition not yet satisfied: {}", result.description);
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
      * @return null if no skip should happen; a human-readable reason string if the step should be skipped.
      */
     public String shouldSkip(SkipConditionRequest condition, List<String> previousResponses) {

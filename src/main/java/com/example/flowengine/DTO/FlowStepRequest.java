@@ -50,7 +50,8 @@ public class FlowStepRequest {
     private Boolean pollUntilSuccess;   // null = use default (false)
     private Integer pollIntervalMs;     // null = use default (5000ms)
     private Integer pollMaxAttempts;    // null = use default (10)
-    private Integer pollExpectedStatus; // null = use default (200)
+    private Integer pollExpectedStatus; // null = use default (200). Set to 0 to skip status check entirely.
+    private String pollConditionJson;   // JSON condition against response body — see SkipConditionEvaluator
 
     // Skip condition — if true against accumulated responses, this step is bypassed
     private SkipConditionRequest skipCondition;
