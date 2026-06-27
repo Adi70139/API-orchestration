@@ -5,18 +5,18 @@ import com.example.flowengine.DTO.FlowStepRequest;
 import com.example.flowengine.DTO.FlowStepReorderRequest;
 import com.example.flowengine.entity.FlowStep;
 import com.example.flowengine.service.FlowStepService;
-//import groovy.util.logging.Slf4j;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import com.example.flowengine.DTO.StepExecutionResult;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/flows/{flowId}/steps")
@@ -27,6 +27,7 @@ public class FlowStepController {
 
     private final FlowStepService flowStepService;
     private final com.example.flowengine.service.ExecutorService executorService;
+    private final com.example.flowengine.service.EnvironmentService environmentService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -127,6 +128,101 @@ public class FlowStepController {
         return executorService.runStep(stepId, envId);
     }
 
+    /**
+     * Captures specific fields from a step's last response body / method outputs
+     * and saves them as environment variables in an existing environment.
+     *
+     * This is what makes two steps independently testable without running a full flow:
+     *   1. POST /{stepId}/run  → step A fires, response captured
+     *   2. POST /{stepId}/capture-to-env → pick token/userId/etc → saved to env
+     *   3. POST /{stepB}/run?envId=X → step B resolves {AUTH_TOKEN} from env, works standalone
+     *
+     * POST /flows/{flowId}/steps/{stepId}/capture-to-env
+     */
+    @PostMapping("/{stepId}/capture-to-env")
+    @Operation(summary = "Capture response fields to environment variables",
+            description = "Picks specific fields from the step's last response and saves them " +
+                    "as env variables — merges into existing vars, does not replace the whole environment. " +
+                    "Use poll-fields first to discover available field paths.")
+    public com.example.flowengine.DTO.EnvironmentResponse captureToEnv(
+            @PathVariable Long flowId,
+            @PathVariable Long stepId,
+            @Valid @RequestBody com.example.flowengine.DTO.CaptureToEnvRequest request) {
+
+        FlowStep step = flowStepService.getById(stepId);
+        if (!step.getFlow().getId().equals(flowId)) {
+            throw new IllegalArgumentException("Step " + stepId + " does not belong to flow " + flowId);
+        }
+
+        // Build the same merged field map that poll-fields returns
+        Map<String, String> allFields = new java.util.LinkedHashMap<>();
+        if (step.getLastResponseBody() != null && !step.getLastResponseBody().isBlank()) {
+            allFields.putAll(com.example.flowengine.utils.PlaceholderUtils
+                    .buildLookupMap(java.util.List.of(step.getLastResponseBody())));
+        }
+        if (step.getLastMethodOutputsJson() != null && !step.getLastMethodOutputsJson().isBlank()) {
+            try {
+                Map<?, ?> methodFields = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(step.getLastMethodOutputsJson(), Map.class);
+                methodFields.forEach((k, v) -> allFields.put(String.valueOf(k), v != null ? String.valueOf(v) : ""));
+            } catch (Exception ignored) {}
+        }
+
+        if (allFields.isEmpty()) {
+            throw new IllegalStateException(
+                    "Step '" + step.getName() + "' has no captured response yet. " +
+                            "Run it first with POST /{stepId}/run, then capture fields.");
+        }
+
+        // Resolve each requested mapping
+        Map<String, String> toCapture = new java.util.LinkedHashMap<>();
+        List<String> notFound = new java.util.ArrayList<>();
+        for (com.example.flowengine.DTO.CaptureToEnvRequest.FieldMapping mapping : request.getMappings()) {
+            String value = allFields.get(mapping.getField());
+
+            if (value == null) {
+                // Field not found as a scalar — try indexed array keys first (field[0], field[1]...)
+                List<String> arrayValues = new java.util.ArrayList<>();
+                int i = 0;
+                while (true) {
+                    String v = allFields.get(mapping.getField() + "[" + i + "]");
+                    if (v == null) break;
+                    arrayValues.add(v);
+                    i++;
+                }
+
+                if (!arrayValues.isEmpty()) {
+                    value = arrayValues.size() == 1 ? arrayValues.get(0) : arrayValues.toString();
+                } else {
+                    // No indexed keys either — navigate the raw JSON to check if the path exists
+                    // but is an empty array ([] produces no indexed keys so the fallback above
+                    // finds nothing, which incorrectly maps to "field not found")
+                    value = resolveRawJsonPath(step.getLastResponseBody(), mapping.getField());
+                }
+            }
+
+            if (value == null) {
+                notFound.add(mapping.getField());
+            } else {
+                toCapture.put(mapping.getEnvVarName(), value);
+            }
+        }
+
+        if (!notFound.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Field(s) not found in step response: " + notFound +
+                            ". Call poll-fields to see all available paths.");
+        }
+
+        com.example.flowengine.DTO.EnvironmentResponse updated =
+                environmentService.mergeVariables(request.getEnvironmentId(), toCapture);
+
+        log.info("[CaptureToEnv] Captured {} field(s) from step '{}' to environment id={}: {}",
+                toCapture.size(), step.getName(), request.getEnvironmentId(), toCapture.keySet());
+
+        return updated;
+    }
+
     @GetMapping("/{stepId}/poll-fields")
     @Operation(summary = "Get available poll condition fields",
             description = "Returns all flattened dot-notation fields from the step's last response body " +
@@ -163,14 +259,82 @@ public class FlowStepController {
                             "Run this step once using POST /{stepId}/run, then call this endpoint.");
         }
 
-        return fields;
+        // Collapse array index keys back to their base path for cleaner UI display.
+        Map<String, String> collapsed = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            String key = entry.getKey();
+            if (key.matches(".*\\[\\d+]$")) {
+                String base = key.replaceAll("\\[\\d+]$", "");
+                if (!collapsed.containsKey(base)) {
+                    collapsed.put(base, "[array] " + entry.getValue());
+                }
+            } else {
+                collapsed.put(key, entry.getValue());
+            }
+        }
+
+        // Empty arrays produce no indexed keys so they're invisible in the flattened map.
+        // Walk the raw JSON to find any array nodes that aren't already represented.
+        if (step.getLastResponseBody() != null && !step.getLastResponseBody().isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode root =
+                        new com.fasterxml.jackson.databind.ObjectMapper()
+                                .readTree(step.getLastResponseBody());
+                addEmptyArrayPaths(root, "", collapsed);
+            } catch (Exception ignored) {}
+        }
+
+        return collapsed;
     }
 
-    @DeleteMapping("/{stepId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary = "Delete a step", description = "Delete a step by flow id")
-    public void delete(@PathVariable Long flowId,
-                       @PathVariable Long stepId) {
-        flowStepService.delete(stepId);
+    private void addEmptyArrayPaths(com.fasterxml.jackson.databind.JsonNode node,
+                                    String prefix,
+                                    Map<String, String> target) {
+        if (node.isObject()) {
+            node.fields().forEachRemaining(entry -> {
+                String path = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+                addEmptyArrayPaths(entry.getValue(), path, target);
+            });
+        } else if (node.isArray() && node.size() == 0) {
+            // Empty array — add with [] marker so user knows the field exists but is empty
+            if (!target.containsKey(prefix)) {
+                target.put(prefix, "[empty array]");
+            }
+        }
     }
+
+
+/**
+ * Navigates a raw JSON string using dot-notation path and returns the value as a string.
+ * Handles cases the flattened map can't express:
+ *   - Empty arrays: [] → returns "[]" so the field is recognised as existing
+ *   - Null values: null → returns "" (empty string, not null, so capture succeeds)
+ * Returns null only if the path genuinely doesn't exist in the JSON.
+ */
+private String resolveRawJsonPath(String json, String dotPath) {
+    if (json == null || json.isBlank() || dotPath == null) return null;
+    try {
+        com.fasterxml.jackson.databind.JsonNode node =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+        for (String segment : dotPath.split("\\.")) {
+            if (node == null || node.isMissingNode()) return null;
+            node = node.isObject() ? node.get(segment) : null;
+        }
+        if (node == null || node.isMissingNode()) return null;
+        if (node.isNull())  return "";
+        if (node.isArray()) return node.size() == 0 ? "[]" : node.toString();
+        if (node.isValueNode()) return node.asText();
+        return node.toString(); // nested object
+    } catch (Exception e) {
+        return null;
+    }
+}
+
+@DeleteMapping("/{stepId}")
+@ResponseStatus(HttpStatus.NO_CONTENT)
+@Operation(summary = "Delete a step", description = "Delete a step by flow id")
+public void delete(@PathVariable Long flowId,
+                   @PathVariable Long stepId) {
+    flowStepService.delete(stepId);
+}
 }

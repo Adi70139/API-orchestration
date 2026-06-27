@@ -56,6 +56,26 @@ public class EnvironmentService {
         return toResponse(environmentRepository.save(env));
     }
 
+    /**
+     * Merges new key-value pairs INTO the existing environment variables without
+     * replacing the whole set. Used by capture-to-env so running step A and capturing
+     * its token doesn't wipe the other variables already in the environment.
+     */
+    @CacheEvict(cacheNames = {
+            "environmentsById", "environmentsByModule", "decryptedEnvironmentVariables",
+            "flowDetails", "flowsAll", "flowsByModuleName"
+    }, allEntries = true)
+    public EnvironmentResponse mergeVariables(Long envId, Map<String, String> newVars) {
+        Environment env = getEntityById(envId);
+        Map<String, String> existing = new LinkedHashMap<>();
+        if (env.getVariablesJson() != null && !env.getVariablesJson().isBlank()) {
+            existing.putAll(decryptVariables(env.getVariablesJson()));
+        }
+        existing.putAll(newVars); // new values overwrite same-key existing ones
+        env.setVariablesJson(encryptVariables(existing));
+        return toResponse(environmentRepository.save(env));
+    }
+
     @CacheEvict(cacheNames = {
             "environmentsById", "environmentsByModule", "decryptedEnvironmentVariables",
             "flowDetails", "flowsAll", "flowsByModuleName"
