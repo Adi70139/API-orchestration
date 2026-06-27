@@ -320,6 +320,93 @@ public class ExecutorService {
         return !steps.isEmpty() && steps.stream().allMatch(s -> "UI".equalsIgnoreCase(s.getMethod()));
     }
 
+    /**
+     * Executes a single step in isolation — no flow context, no previous-step responses.
+     * Designed for:
+     *   1. Testing a newly added step before running the whole flow
+     *   2. Capturing lastResponseBody so poll-fields can return available fields
+     *   3. Verifying URL/headers/body are correct without running everything before it
+     *
+     * Does NOT create a FlowExecution or StepExecution — lightweight ad-hoc call, not tracked.
+     * Context = env vars (if envId given) + method outputs for this step.
+     * Placeholders referencing prior steps ({stepName.field}) will be unresolved — intentional.
+     */
+    @Transactional
+    public StepExecutionResult runStep(Long stepId, Long environmentId) {
+        FlowStep step = flowStepRepository.findById(stepId)
+                .orElseThrow(() -> new IllegalArgumentException("Step not found: " + stepId));
+
+        if ("UI".equalsIgnoreCase(step.getMethod())) {
+            throw new IllegalArgumentException(
+                    "UI steps cannot be run in isolation — use the Playwright flow executor");
+        }
+
+        List<String> context = new ArrayList<>();
+
+        // 1. Seed env variables first
+        if (environmentId != null) {
+            try {
+                Map<String, String> envVars = environmentService.getDecryptedVariables(environmentId);
+                if (!envVars.isEmpty()) {
+                    context.add(objectMapper.writeValueAsString(envVars));
+                    log.info("[RunStep] Seeded {} env variable(s) for step '{}'", envVars.size(), step.getName());
+                }
+            } catch (Exception e) {
+                log.warn("[RunStep] Could not load environment {}: {}", environmentId, e.getMessage());
+            }
+        }
+
+        // 2. Run custom methods attached to this step
+        MethodExecutorService.StepMethodContext methodContext = null;
+        try {
+            methodContext = methodExecutorService.runMethodsForStep(step.getId(), context);
+            if (!methodContext.mergedOutput().isEmpty()) {
+                context.add(objectMapper.writeValueAsString(methodContext.mergedOutput()));
+                log.info("[RunStep] Injected {} method output(s) into context for step '{}'",
+                        methodContext.mergedOutput().size(), step.getName());
+            }
+        } catch (Exception e) {
+            log.warn("[RunStep] Method execution failed for step '{}' — continuing without method outputs: {}",
+                    step.getName(), e.getMessage());
+        }
+
+        // 3. Minimal in-memory StepExecution — NOT persisted.
+        //    flow_execution_id is nullable=false at the JPA level so we can't save this without
+        //    a real FlowExecution. Ad-hoc test runs don't need history tracking — just execute and return.
+        StepExecution stepExecution = new StepExecution();
+        stepExecution.setStepId(step.getId());
+        stepExecution.setStepName(step.getName());
+        stepExecution.setStepOrder(step.getStepOrder());
+        stepExecution.setStartedAt(LocalDateTime.now());
+        stepExecution.setStatus(ExecutionStatus.IN_PROGRESS);
+
+        log.info("[RunStep] Executing step '{}' (id={}) in isolation", step.getName(), stepId);
+
+        StepExecutionResult result = executeStep(step, context, new HashMap<>(), stepExecution);
+
+        // 4. Save response body and method outputs on success so poll-fields works immediately
+        if (result.isSuccess() && result.getResponseBody() != null) {
+            flowStepRepository.updateLastResponseBody(stepId, result.getResponseBody());
+            try {
+                if (methodContext != null && !methodContext.mergedOutput().isEmpty()) {
+                    Map<String, String> flatMethodOutputs = com.example.flowengine.utils.PlaceholderUtils
+                            .buildLookupMap(List.of(objectMapper.writeValueAsString(methodContext.mergedOutput())));
+                    flowStepRepository.updateLastMethodOutputs(stepId,
+                            objectMapper.writeValueAsString(flatMethodOutputs));
+                }
+            } catch (Exception e) {
+                log.warn("[RunStep] Could not persist method outputs for step '{}': {}", step.getName(), e.getMessage());
+            }
+            log.info("[RunStep] Step '{}' → {} in {}ms — lastResponseBody + method outputs updated",
+                    step.getName(), result.getStatusCode(), result.getDurationMs());
+        } else {
+            log.warn("[RunStep] Step '{}' → {} error={}",
+                    step.getName(), result.getStatusCode(), result.getErrorMessage());
+        }
+
+        return result;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void persistLastResponseBody(Long stepId, String responseBody) {
         flowStepRepository.updateLastResponseBody(stepId, responseBody);
@@ -518,12 +605,10 @@ public class ExecutorService {
 
             // Run pre-step methods and inject their output into the placeholder context
             List<String> previousResponsesWithMethods = new ArrayList<>(previousResponses);
+            MethodExecutorService.StepMethodContext methodContext = null;
             try {
-                MethodExecutorService.StepMethodContext methodContext =
-                        methodExecutorService.runMethodsForStep(step.getId(), previousResponses);
+                methodContext = methodExecutorService.runMethodsForStep(step.getId(), previousResponses);
                 if (!methodContext.mergedOutput().isEmpty()) {
-                    // Serialize method output as JSON and inject as an additional context entry
-                    // Keys are already prefixed with "method." — e.g. {"method.result": "42"}
                     previousResponsesWithMethods.add(
                             objectMapper.writeValueAsString(methodContext.mergedOutput()));
                     log.info("Injected {} method output(s) into context for step '{}'",
@@ -532,8 +617,6 @@ public class ExecutorService {
             } catch (Exception e) {
                 log.warn("Could not run pre-step methods for step '{}': {}", step.getName(), e.getMessage());
             }
-
-            log.info("Context for the step {}, {}",step.getName(), previousResponsesWithMethods);
 
             StepExecutionResult stepResult = Boolean.TRUE.equals(step.getPollUntilSuccess())
                     ? executeStepWithPolling(step, previousResponsesWithMethods, responsesByStepId, stepExecution)
@@ -557,6 +640,17 @@ public class ExecutorService {
                     self.persistLastResponseBody(step.getId(), stepResult.getResponseBody());
                 } catch (Exception e) {
                     log.warn("Could not persist lastResponseBody for step '{}': {}", step.getName(), e.getMessage());
+                }
+                // Persist method outputs too so poll-fields shows them alongside response fields
+                try {
+                    if (methodContext != null && !methodContext.mergedOutput().isEmpty()) {
+                        Map<String, String> flatMethodOutputs = com.example.flowengine.utils.PlaceholderUtils
+                                .buildLookupMap(List.of(objectMapper.writeValueAsString(methodContext.mergedOutput())));
+                        flowStepRepository.updateLastMethodOutputs(step.getId(),
+                                objectMapper.writeValueAsString(flatMethodOutputs));
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not persist method outputs for step '{}': {}", step.getName(), e.getMessage());
                 }
             } else {
                 allPassed = false;

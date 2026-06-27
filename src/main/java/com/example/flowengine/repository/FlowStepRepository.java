@@ -29,4 +29,9 @@ public interface FlowStepRepository extends JpaRepository<FlowStep, Long> {
     @Query(value = "UPDATE flow_steps SET last_response_body = :body WHERE id = :id",
             nativeQuery = true)
     void updateLastResponseBody(@Param("id") Long id, @Param("body") String body);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "UPDATE flow_steps SET last_method_outputs_json = :json WHERE id = :id",
+            nativeQuery = true)
+    void updateLastMethodOutputs(@Param("id") Long id, @Param("json") String json);
 }

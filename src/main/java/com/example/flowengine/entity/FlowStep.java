@@ -132,6 +132,12 @@ public class FlowStep {
     @Column(columnDefinition = "TEXT")
     private String lastResponseBody;
 
+    // Method outputs from most recent execution, stored as JSON map.
+    // Populated alongside lastResponseBody so poll-fields can show method keys too.
+    // Keys are in the same format as execution context: e.g. {"method.tokenExtractor.token": "abc..."}
+    @Column(columnDefinition = "TEXT")
+    private String lastMethodOutputsJson;
+
     @ManyToOne
     @JoinColumn(name = "flow_id", nullable = false)
     @JsonBackReference
