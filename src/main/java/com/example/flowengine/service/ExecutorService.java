@@ -384,9 +384,15 @@ public class ExecutorService {
 
         StepExecutionResult result = executeStep(step, context, new HashMap<>(), stepExecution);
 
-        // 4. Save response body and method outputs on success so poll-fields works immediately
-        if (result.isSuccess() && result.getResponseBody() != null) {
-            flowStepRepository.updateLastResponseBody(stepId, result.getResponseBody());
+        // Save response body if we got ANY HTTP response — regardless of assertion results.
+        // Assertion failures are expected here because:
+        //   1. Context only has env vars + method outputs (no prior step responses)
+        //   2. Schema assertions check the flattened context, not the raw response body
+        // The purpose of runStep is to capture the response for poll-fields and capture-to-env,
+        // not to enforce correctness. Assertions are reported in the result for visibility only.
+        String responseBody = result.getResponseBody();
+        if (responseBody != null && !responseBody.isBlank()) {
+            flowStepRepository.updateLastResponseBody(stepId, responseBody);
             try {
                 if (methodContext != null && !methodContext.mergedOutput().isEmpty()) {
                     Map<String, String> flatMethodOutputs = com.example.flowengine.utils.PlaceholderUtils
@@ -397,10 +403,11 @@ public class ExecutorService {
             } catch (Exception e) {
                 log.warn("[RunStep] Could not persist method outputs for step '{}': {}", step.getName(), e.getMessage());
             }
-            log.info("[RunStep] Step '{}' → {} in {}ms — lastResponseBody + method outputs updated",
-                    step.getName(), result.getStatusCode(), result.getDurationMs());
+            log.info("[RunStep] Step '{}' → HTTP {} in {}ms — response captured (assertions: {})",
+                    step.getName(), result.getStatusCode(), result.getDurationMs(),
+                    result.isSuccess() ? "passed" : "failed (ignored for capture)");
         } else {
-            log.warn("[RunStep] Step '{}' → {} error={}",
+            log.warn("[RunStep] Step '{}' → HTTP {} — no response body to capture, error={}",
                     step.getName(), result.getStatusCode(), result.getErrorMessage());
         }
 

@@ -95,7 +95,11 @@ public class AssertionEngine {
             Object expected = entry.getValue();
             String path = prefix + "." + key;
 
-            JsonNode child = node.get(key);
+            // Key may be dot-notation (e.g. "userInfo.id") because SchemaExtractorService
+            // produces a flat map. Traverse the node by each segment rather than calling
+            // node.get("userInfo.id") which returns null — Jackson's get() treats the argument
+            // as a literal key name, not a path.
+            JsonNode child = resolvePathSegments(node, key);
 
             if (child == null || child.isNull()) {
                 results.add(new AssertionResult(path, false,
@@ -123,6 +127,26 @@ public class AssertionEngine {
         }
     }
 
+    /**
+     * Resolves a potentially dot-notation key against a JsonNode by traversing segment by segment.
+     * e.g. resolvePathSegments(root, "userInfo.id") = root.get("userInfo").get("id")
+     * Falls back to a single-key lookup first to handle keys that literally contain dots.
+     */
+    private JsonNode resolvePathSegments(JsonNode node, String key) {
+        if (node == null) return null;
+        // Try literal key first (handles genuine single-level keys)
+        JsonNode direct = node.get(key);
+        if (direct != null) return direct;
+        // Fall back to dot-notation traversal
+        String[] parts = key.split("\\.");
+        JsonNode current = node;
+        for (String part : parts) {
+            if (current == null || current.isNull() || !current.isObject()) return null;
+            current = current.get(part);
+        }
+        return current;
+    }
+
     // ── Field assertion evaluation ────────────────────────────────────────────
 
     private void evaluateFieldAssertions(String path, JsonNode node,
@@ -139,9 +163,9 @@ public class AssertionEngine {
             JsonNode expectedNode = op.getValue();
             Object expected = expectedNode.isTextual() ? expectedNode.asText()
                     : expectedNode.isNumber()  ? expectedNode.numberValue()
-                    : expectedNode.isBoolean() ? expectedNode.booleanValue()
-                    : expectedNode.isArray()   ? objectMapper.convertValue(expectedNode, List.class)
-                    : expectedNode.asText();
+                      : expectedNode.isBoolean() ? expectedNode.booleanValue()
+                        : expectedNode.isArray()   ? objectMapper.convertValue(expectedNode, List.class)
+                          : expectedNode.asText();
 
             switch (operator) {
                 case "exists" -> {
@@ -152,7 +176,7 @@ public class AssertionEngine {
                             passed
                                     ? "exists=" + shouldExist + " check passed"
                                     : "Expected field to " + (shouldExist ? "exist" : "not exist") +
-                                    " but it " + (actuallyExists ? "does exist" : "does not exist"),
+                                      " but it " + (actuallyExists ? "does exist" : "does not exist"),
                             critical));
                 }
                 case "type" -> {
