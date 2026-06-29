@@ -122,9 +122,31 @@ public class PlaceholderUtils {
                 flattenNode(node.get(i), prefix + "[" + i + "]", map);
             }
         } else {
-            // Leaf value
+            // Leaf value — store the raw text first so the top-level key always resolves
             if (!prefix.isEmpty()) {
                 map.put(prefix, node.asText());
+            }
+            // If the value is a JSON string (e.g. a method output field like `content` that
+            // contains a serialised API response), also flatten its nested fields under the
+            // same prefix so paths like {apiCall.content.accessToken} resolve instead of
+            // requiring the caller to know that `content` is an embedded JSON string.
+            // Guard: only attempt if it starts with { or [ to avoid wasting time on plain strings.
+            if (node.isTextual()) {
+                String text = node.asText();
+                if (!text.isBlank() && (text.startsWith("{") || text.startsWith("["))) {
+                    try {
+                        JsonNode embedded = MAPPER.readTree(text);
+                        if (embedded.isObject() || embedded.isArray()) {
+                            // Flatten the embedded JSON under the same prefix — produces
+                            // apiCall.content.accessToken, apiCall.content.userInfo.id, etc.
+                            flattenNode(embedded, prefix, map);
+                            // Note: the top-level key (apiCall.content) is already in the map
+                            // from the put() above so it still resolves to the full JSON string.
+                        }
+                    } catch (Exception ignored) {
+                        // Not valid JSON — leave as plain string value, already stored above
+                    }
+                }
             }
         }
     }

@@ -50,6 +50,8 @@ public class MethodExecutorService {
                 // Resolve parameter bindings — values may contain {placeholders}
                 Map<String, String> resolvedParams = resolveBindings(sm.getParameterBindingsJson(), previousResponses);
 
+                log.info("Resolved placeHolders :- {}",resolvedParams.toString());
+
                 Map<String, String> output = switch (method.getType()) {
                     case BUILTIN -> runBuiltin(method.getBuiltinType(), resolvedParams, false);
                     case USER_DEFINED -> runGroovy(method.getGroovyScript(), resolvedParams);
