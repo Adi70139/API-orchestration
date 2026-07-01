@@ -50,8 +50,6 @@ public class MethodExecutorService {
                 // Resolve parameter bindings — values may contain {placeholders}
                 Map<String, String> resolvedParams = resolveBindings(sm.getParameterBindingsJson(), previousResponses);
 
-                log.info("Resolved placeHolders :- {}",resolvedParams.toString());
-
                 Map<String, String> output = switch (method.getType()) {
                     case BUILTIN -> runBuiltin(method.getBuiltinType(), resolvedParams, false);
                     case USER_DEFINED -> runGroovy(method.getGroovyScript(), resolvedParams);
@@ -72,6 +70,28 @@ public class MethodExecutorService {
                     mergedOutput.put(key, v);
                     String preview = v != null && v.length() > 40 ? v.substring(0, 40) + "..." : v;
                     hints.add(String.format("Use {%s} → \"%s\"", key, preview));
+
+                    // If the value is a JSON string, also flatten its nested fields so paths like
+                    // {apiCall.content.accessToken} resolve without the caller needing to know
+                    // that `content` is an embedded JSON string returned by the Groovy script.
+                    if (v != null && !v.isBlank() && (v.startsWith("{") || v.startsWith("["))) {
+                        try {
+                            com.fasterxml.jackson.databind.JsonNode embedded =
+                                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(v);
+                            if (embedded.isObject() || embedded.isArray()) {
+                                Map<String, String> expanded = PlaceholderUtils.buildLookupMap(List.of(v));
+                                expanded.forEach((nestedKey, nestedVal) -> {
+                                    String fullKey = key + "." + nestedKey;
+                                    mergedOutput.put(fullKey, nestedVal);
+                                    String nestedPreview = nestedVal != null && nestedVal.length() > 40
+                                            ? nestedVal.substring(0, 40) + "..." : nestedVal;
+                                    hints.add(String.format("Use {%s} → \"%s\"", fullKey, nestedPreview));
+                                });
+                            }
+                        } catch (Exception ignored) {
+                            // Not valid JSON — leave as plain string, already added above
+                        }
+                    }
                 });
                 result.setUsageHints(hints);
 
